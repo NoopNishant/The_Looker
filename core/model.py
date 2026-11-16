@@ -1,0 +1,188 @@
+"""
+core/model.py - Multi-Task CNN Architecture for Currency Recognition and Counterfeit Detection.
+
+Architecture:
+- Base: MobileNetV3-Small (optimized for edge/CPU inference, latency < 15ms).
+- Head 1: Denomination Classification (Cross-Entropy).
+- Head 2: Counterfeit Probability Estimation (Binary Cross-Entropy with Sigmoid).
+"""
+
+from typing import Dict, List, Optional, Tuple, Union
+import torch
+import torch.nn as nn
+import torchvision.models as models
+
+
+DEFAULT_DENOMINATIONS: List[str] = [
+    "Background",
+    "10",
+    "20",
+    "50",
+    "100",
+    "200",
+    "500",
+    "2000"
+]
+
+
+class MultiTaskMobileNetV3(nn.Module):
+    """
+    Multi-Task MobileNetV3 for concurrent denomination classification
+    and counterfeit probability prediction.
+    """
+
+    def __init__(
+        self,
+        num_denominations: int = len(DEFAULT_DENOMINATIONS),
+        denominations: Optional[List[str]] = None,
+        pretrained: bool = False,
+        dropout_rate: float = 0.2
+    ) -> None:
+        super().__init__()
+        self.denominations = denominations or DEFAULT_DENOMINATIONS
+        self.num_denominations = num_denominations
+
+        # Load MobileNetV3-Small backbone
+        # We extract features and avgpool
+        weights = models.MobileNet_V3_Small_Weights.DEFAULT if pretrained else None
+        base_model = models.mobilenet_v3_small(weights=weights)
+        self.features = base_model.features
+        self.avgpool = base_model.avgpool
+
+        # In MobileNetV3-Small, feature output channels = 576
+        in_features = 576
+
+        # Shared projection layer for feature refinement
+        self.shared_fc = nn.Sequential(
+            nn.Linear(in_features, 512),
+            nn.Hardswish(inplace=True),
+            nn.Dropout(p=dropout_rate)
+        )
+
+        # Head 1: Denomination Classification (Cross-Entropy logits)
+        self.head_denomination = nn.Sequential(
+            nn.Linear(512, 256),
+            nn.Hardswish(inplace=True),
+            nn.Dropout(p=dropout_rate),
+            nn.Linear(256, self.num_denominations)
+        )
+
+        # Head 2: Counterfeit Detection (Binary logit -> Sigmoid probability)
+        # 0.0 = Genuine, 1.0 = Counterfeit
+        self.head_counterfeit = nn.Sequential(
+            nn.Linear(512, 128),
+            nn.Hardswish(inplace=True),
+            nn.Dropout(p=dropout_rate),
+            nn.Linear(128, 1)
+        )
+
+        self.sigmoid = nn.Sigmoid()
+        self._initialize_head_weights()
+
+    def _initialize_head_weights(self) -> None:
+        """Kaiming normal initialization for task-specific projection heads."""
+        for head in [self.shared_fc, self.head_denomination, self.head_counterfeit]:
+            for m in head.modules():
+                if isinstance(m, nn.Linear):
+                    nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
+                    if m.bias is not None:
+                        nn.init.zeros_(m.bias)
+
+    def forward(self, x: torch.Tensor) -> Dict[str, torch.Tensor]:
+        """
+        Forward pass.
+        Args:
+            x: Tensor of shape (B, 3, H, W) normalized to ImageNet statistics or [0, 1].
+        Returns:
+            Dictionary containing:
+                - 'denomination_logits': Tensor of shape (B, num_denominations)
+                - 'counterfeit_logits': Tensor of shape (B, 1)
+                - 'counterfeit_prob': Tensor of shape (B, 1) in range [0, 1]
+                - 'features': Extracted embedding tensor (B, 512)
+        """
+        # Backbone feature extraction
+        feats = self.features(x)
+        pooled = self.avgpool(feats)
+        flattened = torch.flatten(pooled, 1)
+
+        # Shared representation
+        shared = self.shared_fc(flattened)
+
+        # Task Heads
+        denom_logits = self.head_denomination(shared)
+        counterfeit_logit = self.head_counterfeit(shared)
+        counterfeit_prob = self.sigmoid(counterfeit_logit)
+
+        return {
+            "denomination_logits": denom_logits,
+            "counterfeit_logits": counterfeit_logit,
+            "counterfeit_prob": counterfeit_prob,
+            "features": shared
+        }
+
+    @torch.inference_mode()
+    def predict_single(
+        self,
+        tensor_img: torch.Tensor,
+        counterfeit_threshold: float = 0.50
+    ) -> Dict[str, Union[str, float, bool]]:
+        """
+        Inference helper for a single image tensor of shape (1, 3, H, W) or (3, H, W).
+        """
+        if tensor_img.dim() == 3:
+            tensor_img = tensor_img.unsqueeze(0)
+
+        out = self.forward(tensor_img)
+        denom_logits = out["denomination_logits"][0]
+        counterfeit_prob = out["counterfeit_prob"][0].item()
+
+        probs = torch.softmax(denom_logits, dim=-1)
+        pred_idx = torch.argmax(probs).item()
+        denom_confidence = probs[pred_idx].item()
+        denom_name = self.denominations[pred_idx] if pred_idx < len(self.denominations) else f"Class_{pred_idx}"
+
+        is_counterfeit = counterfeit_prob >= counterfeit_threshold
+
+        return {
+            "denomination": denom_name,
+            "denomination_idx": pred_idx,
+            "confidence": denom_confidence,
+            "counterfeit_prob": counterfeit_prob,
+            "is_counterfeit": is_counterfeit,
+            "verdict": "SUSPECT / COUNTERFEIT" if is_counterfeit else "GENUINE"
+        }
+
+
+class MultiTaskCurrencyLoss(nn.Module):
+    """
+    Joint loss function:
+    L = alpha * L_denomination(CrossEntropy) + beta * L_counterfeit(BCEWithLogits)
+    """
+
+    def __init__(self, alpha: float = 1.0, beta: float = 1.5) -> None:
+        super().__init__()
+        self.alpha = alpha
+        self.beta = beta
+        self.ce_loss = nn.CrossEntropyLoss()
+        self.bce_loss = nn.BCEWithLogitsLoss()
+
+    def forward(
+        self,
+        predictions: Dict[str, torch.Tensor],
+        target_denom: torch.Tensor,
+        target_counterfeit: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Args:
+            predictions: Output dict from MultiTaskMobileNetV3
+            target_denom: LongTensor of shape (B,) with class indices
+            target_counterfeit: FloatTensor of shape (B, 1) or (B,) with binary 0/1 labels
+        Returns:
+            Tuple of (total_loss, denom_loss, counterfeit_loss)
+        """
+        target_counterfeit = target_counterfeit.view(-1, 1).float()
+        l_denom = self.ce_loss(predictions["denomination_logits"], target_denom)
+        l_counterfeit = self.bce_loss(predictions["counterfeit_logits"], target_counterfeit)
+        total_loss = self.alpha * l_denom + self.beta * l_counterfeit
+        return total_loss, l_denom, l_counterfeit
+

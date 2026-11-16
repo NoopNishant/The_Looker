@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>The Looker — Currency Forensics & Counterfeit Guard</title>
+  
+  <link rel="stylesheet" href="/static/css/style.css?v=2.2">
+  
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body>
+
+  <!-- Screen-Flash Differencing White Canvas Layer -->
+  <div id="screen-flash-overlay"></div>
+
+  <div class="app-container">
+    
+    <!-- Editorial Brand Header -->
+    <header class="app-header">
+      <div class="brand-section">
+        <h1 class="brand-title">The Looker</h1>
+        <span class="brand-subtitle">Currency Forensics Studio</span>
+      </div>
+
+      <div class="header-status">
+        <div class="status-pill">
+          <span class="status-dot"></span>
+          <span id="engine-status-text">MOBILENET-V3 • CPU READY</span>
+        </div>
+
+        <button id="btn-toggle-audio" class="btn-icon" title="Toggle Acoustic Rhythm Feedback">
+          <i data-lucide="volume-2" id="audio-icon"></i>
+        </button>
+
+        <button id="btn-fullscreen" class="btn-icon" title="Fullscreen Mode">
+          <i data-lucide="maximize"></i>
+        </button>
+      </div>
+    </header>
+
+    <!-- Navigation Mode Switcher -->
+    <nav class="mode-nav">
+      <div class="mode-tabs">
+        <button class="tab-btn active" data-mode="live">
+          <i data-lucide="camera" style="width: 16px; height: 16px;"></i>
+          Live Camera
+        </button>
+        <button class="tab-btn" data-mode="photo">
+          <i data-lucide="image" style="width: 16px; height: 16px;"></i>
+          Photo Forensics
+        </button>
+        <button class="tab-btn" data-mode="video">
+          <i data-lucide="film" style="width: 16px; height: 16px;"></i>
+          Video Stream
+        </button>
+        <button class="tab-btn" data-mode="synthetic">
+          <i data-lucide="flask-conical" style="width: 16px; height: 16px;"></i>
+          Synthetic Bench
+        </button>
+        <button class="tab-btn" data-mode="compare">
+          <i data-lucide="columns-2" style="width: 16px; height: 16px;"></i>
+          Side-by-Side Lab
+        </button>
+      </div>
+    </nav>
+
+    <!-- Main Forensic Grid -->
+    <main class="workspace-grid">
+      
+      <!-- Left Column: Interactive Viewport -->
+      <section class="viewport-card">
+        <div class="viewport-header">
+          <div class="viewport-title" id="viewport-heading">Sensor Feed & Reticle</div>
+          <div class="viewport-controls">
+            <button id="btn-cam-switch" class="btn-pill" style="display:inline-flex;">
+              <i data-lucide="refresh-cw" style="width: 13px; height: 13px;"></i>
+              Switch Cam
+            </button>
+            <button id="btn-upload-trigger" class="btn-pill" style="display:none;">
+              <i data-lucide="upload" style="width: 13px; height: 13px;"></i>
+              Choose File
+            </button>
+          </div>
+        </div>
+
+        <!-- Media Display Viewport -->
+        <div class="screen-area" id="screen-container">
+          <!-- Live Camera Video -->
+          <video id="webcam-video" autoplay playsinline muted></video>
+          
+          <!-- Reticle & Bounding Canvas -->
+          <canvas id="viewport-canvas"></canvas>
+
+          <!-- Uploaded Photo View -->
+          <img id="uploaded-image-preview" alt="Uploaded Banknote" style="display:none;" />
+
+          <!-- Uploaded Video View -->
+          <video id="uploaded-video" controls playsinline style="display:none;"></video>
+
+          <!-- Upload Dropzone Target -->
+          <div id="dropzone-box" class="dropzone-overlay" style="display:none;">
+            <div class="dropzone-icon">
+              <i data-lucide="file-up" style="width: 24px; height: 24px;"></i>
+            </div>
+            <div class="dropzone-text">Drop banknote photo or video here</div>
+            <div class="dropzone-subtext">Supports high-res PNG, JPG, WEBP, MP4, MOV</div>
+          </div>
+        </div>
+
+        <!-- Viewport Footer Telemetry & Flash Differencing Button -->
+        <div class="viewport-footer">
+          <div class="telemetry-inline">
+            <span>FPS: <strong id="telemetry-fps">0.0</strong></span>
+            <span>LATENCY: <strong id="telemetry-latency">0.0 ms</strong></span>
+            <span>AUDIO: <strong id="telemetry-audio-tag">STANDBY</strong></span>
+          </div>
+
+          <button id="btn-flash-differencing" class="flash-pulse-btn" title="Flash screen to extract watermark transmission mask">
+            <i data-lucide="zap" style="width: 14px; height: 14px;"></i>
+            Pulse Watermark Flash
+          </button>
+        </div>
+      </section>
+
+      <!-- Right Column: Forensic Telemetry & Verdict -->
+      <aside class="telemetry-card">
+        <div class="telemetry-header">
+          <div class="telemetry-title">Forensic Assessment</div>
+          <span class="status-pill" id="inspection-state-pill">ACTIVE</span>
+        </div>
+
+        <!-- Master Verdict Badge -->
+        <div class="verdict-banner neutral" id="verdict-badge">
+          <span class="verdict-label">Integrity Verdict</span>
+          <span class="verdict-text" id="verdict-text">Awaiting Currency Note</span>
+          <span class="verdict-reason" id="verdict-reason" style="font-size: 0.76rem; opacity: 0.88; font-weight: 500; margin-top: 4px; display: block;">Place currency note in live camera view</span>
+        </div>
+
+        <!-- Denomination & Confidence Box -->
+        <div class="denom-box">
+          <div class="denom-meta">
+            <div class="denom-title">Denomination</div>
+            <div class="denom-value" id="denom-value">---</div>
+          </div>
+          <div class="denom-confidence" style="text-align: right;">
+            <div class="denom-title">Confidence</div>
+            <div class="denom-value" id="denom-confidence" style="font-size: 1rem; color: var(--text-secondary);">0.0%</div>
+          </div>
+        </div>
+
+        <!-- Gauge 1: Composite Counterfeit Risk -->
+        <div class="metric-row">
+          <div class="metric-meta">
+            <span class="metric-name">Composite Counterfeit Score</span>
+            <span class="metric-value" id="metric-counterfeit-score">0.00</span>
+          </div>
+          <div class="progress-track">
+            <div class="progress-bar" id="bar-counterfeit" style="width: 0%;"></div>
+          </div>
+        </div>
+
+        <!-- Gauge 2: CMYK Halftone Rosettes -->
+        <div class="metric-row">
+          <div class="metric-meta">
+            <span class="metric-name">CMYK Halftone Dither Score</span>
+            <span class="metric-value" id="metric-halftone-score">0.00</span>
+          </div>
+          <div class="progress-track">
+            <div class="progress-bar" id="bar-halftone" style="width: 0%;"></div>
+          </div>
+        </div>
+
+        <!-- Gauge 3: Deep Feature Probability -->
+        <div class="metric-row">
+          <div class="metric-meta">
+            <span class="metric-name">CNN Semantic Head Prob</span>
+            <span class="metric-value" id="metric-cnn-score">0.00</span>
+          </div>
+          <div class="progress-track">
+            <div class="progress-bar" id="bar-cnn" style="width: 0%;"></div>
+          </div>
+        </div>
+
+        <!-- Gauge 4: Watermark Optical Transmission Density -->
+        <div class="metric-row">
+          <div class="metric-meta">
+            <span class="metric-name">Watermark Optical Transmission</span>
+            <span class="metric-value" id="metric-watermark-density">0.00%</span>
+          </div>
+          <div class="progress-track">
+            <div class="progress-bar" id="bar-watermark" style="width: 0%; background-color: var(--pastel-amber-text);"></div>
+          </div>
+        </div>
+
+      </aside>
+    </main>
+
+    <!-- Synthetic Demonstration Bench Control Bar -->
+    <section class="bench-bar" id="synthetic-bench-bar" style="display:none;">
+      <div class="bench-group">
+        <label for="bench-denom-select" class="bench-label">Denomination:</label>
+        <select id="bench-denom-select" class="bench-select">
+          <option value="500" selected>₹500 — Stone Gray (New Series)</option>
+          <option value="2000">₹2000 — Magenta (High Value)</option>
+          <option value="200">₹200 — Bright Orange</option>
+          <option value="100">₹100 — Lavender</option>
+          <option value="50">₹50 — Fluorescent Blue</option>
+          <option value="20">₹20 — Greenish Yellow</option>
+          <option value="10">₹10 — Chocolate Brown</option>
+        </select>
+      </div>
+
+      <div class="bench-actions">
+        <button class="btn-pill accent" id="btn-demo-compare" title="Dual side-by-side comparative inspection of Authentic Intaglio vs Counterfeit Halftone">
+          <i data-lucide="columns-2" style="width: 15px; height: 15px;"></i>
+          Side-by-Side Comparison
+        </button>
+        <button class="btn-pill primary" id="btn-demo-genuine">
+          <i data-lucide="shield-check" style="width: 14px; height: 14px;"></i>
+          Inspect Authentic
+        </button>
+        <button class="btn-pill suspect-btn" id="btn-demo-counterfeit">
+          <i data-lucide="shield-alert" style="width: 14px; height: 14px;"></i>
+          Inspect Counterfeit
+        </button>
+      </div>
+    </section>
+
+    <!-- Side-by-Side Forensic Contrast Section -->
+    <section class="comparison-section" id="comparison-section" style="display:none;">
+      <div class="comparison-header">
+        <div class="comparison-title-box">
+          <span class="compare-badge">FORENSIC COMPARATIVE LAB</span>
+          <h2 class="comparison-heading" id="compare-heading">Side-by-Side Forensics: ₹500 Authentic Intaglio vs. CMYK Counterfeit</h2>
+          <p class="comparison-subheading">Simultaneous comparative examination of fine-line intaglio engraving vs. 4-color printer halftone rosettes at 2x neural super-resolution</p>
+        </div>
+      </div>
+
+      <div class="comparison-grid">
+        
+        <!-- Left Pane: Authentic Genuine Note -->
+        <div class="compare-card genuine-card">
+          <div class="compare-card-header">
+            <div class="compare-tag genuine">
+              <span class="dot genuine"></span>
+              AUTHENTIC INTAGLIO CURRENCY
+            </div>
+            <div class="compare-score-badge genuine" id="cmp-gen-score">0.05 RISK</div>
+          </div>
+
+          <div class="compare-media-box">
+            <img id="cmp-gen-full" src="" alt="Authentic Banknote Overview" class="compare-full-img" />
+          </div>
+
+          <div class="compare-metrics-row">
+            <div class="cmp-stat">
+              <span class="cmp-stat-label">Integrity Verdict</span>
+              <span class="cmp-stat-val genuine" id="cmp-gen-verdict">VERIFIED GENUINE</span>
+            </div>
+            <div class="cmp-stat">
+              <span class="cmp-stat-label">Halftone Score</span>
+              <span class="cmp-stat-val" id="cmp-gen-ht">0.04</span>
+            </div>
+            <div class="cmp-stat">
+              <span class="cmp-stat-label">Surface Topology</span>
+              <span class="cmp-stat-val" id="cmp-gen-detail">Continuous Lathe</span>
+            </div>
+          </div>
+
+          <div class="compare-plates-grid">
+            <div class="compare-plate-box">
+              <div class="compare-plate-title">2x ESPCN Neural Super-Res</div>
+              <div class="compare-plate-media">
+                <img id="cmp-gen-sr" src="" alt="Authentic 2x Micro-Texture" class="compare-plate-img" />
+              </div>
+              <div class="compare-plate-desc">Crisp continuous intaglio lathe relief</div>
+            </div>
+            <div class="compare-plate-box">
+              <div class="compare-plate-title">2D FFT Rosette Spectrum</div>
+              <div class="compare-plate-media">
+                <img id="cmp-gen-fft" src="" alt="Authentic 2D FFT Spectrum" class="compare-plate-img" />
+              </div>
+              <div class="compare-plate-desc">Aperiodic smooth natural frequency</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right Pane: Counterfeit Halftone Note -->
+        <div class="compare-card suspect-card">
+          <div class="compare-card-header">
+            <div class="compare-tag suspect">
+              <span class="dot suspect"></span>
+              COUNTERFEIT CMYK DITHERED
+            </div>
+            <div class="compare-score-badge suspect" id="cmp-sus-score">0.95 RISK</div>
+          </div>
+
+          <div class="compare-media-box">
+            <img id="cmp-sus-full" src="" alt="Counterfeit Banknote Overview" class="compare-full-img" />
+          </div>
+
+          <div class="compare-metrics-row">
+            <div class="cmp-stat">
+              <span class="cmp-stat-label">Integrity Verdict</span>
+              <span class="cmp-stat-val suspect" id="cmp-sus-verdict">COUNTERFEIT / SUSPECT</span>
+            </div>
+            <div class="cmp-stat">
+              <span class="cmp-stat-label">Halftone Score</span>
+              <span class="cmp-stat-val suspect" id="cmp-sus-ht">0.96</span>
+            </div>
+            <div class="cmp-stat">
+              <span class="cmp-stat-label">Surface Topology</span>
+              <span class="cmp-stat-val suspect" id="cmp-sus-detail">Printer Rosette Dots</span>
+            </div>
+          </div>
+
+          <div class="compare-plates-grid">
+            <div class="compare-plate-box">
+              <div class="compare-plate-title">2x ESPCN Neural Super-Res</div>
+              <div class="compare-plate-media">
+                <img id="cmp-sus-sr" src="" alt="Counterfeit 2x Micro-Texture" class="compare-plate-img" />
+              </div>
+              <div class="compare-plate-desc">Dispersed CMYK droplets & dithering</div>
+            </div>
+            <div class="compare-plate-box">
+              <div class="compare-plate-title">2D FFT Rosette Spectrum</div>
+              <div class="compare-plate-media">
+                <img id="cmp-sus-fft" src="" alt="Counterfeit 2D FFT Spectrum" class="compare-plate-img" />
+              </div>
+              <div class="compare-plate-desc">Periodic harmonic spikes (15°, 45°, 75°)</div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- Video Temporal Timeline Inspection Section -->
+    <section class="timeline-card" id="video-timeline-section">
+      <div class="plates-section-header">
+        <div>
+          <div class="plates-title">Temporal Video Inspection Timeline</div>
+          <div class="plates-subtitle" id="timeline-stats-text">Analyzing frame keyframes across video duration</div>
+        </div>
+      </div>
+      <div class="timeline-scroller" id="timeline-container">
+        <!-- Keyframe nodes injected dynamically -->
+      </div>
+    </section>
+
+    <!-- Multi-Spectral Forensic Plates Drawer -->
+    <section class="plates-section" id="plates-section">
+      <div class="plates-section-header">
+        <div>
+          <div class="plates-title">Multi-Spectral Micro-Texture Plates</div>
+          <div class="plates-subtitle">Topography, 2x ESPCN Neural Super-Resolution, 2D FFT Power Spectrum & CMYK Separation</div>
+        </div>
+      </div>
+
+      <div class="plates-grid">
+        
+        <!-- Plate 1: CLAHE Contrast Topography -->
+        <div class="plate-card">
+          <div class="plate-media">
+            <img id="plate-img-clahe" src="" alt="CLAHE Micro-Contrast Topography" />
+          </div>
+          <div class="plate-caption">
+            <span class="plate-name">CLAHE Topography</span>
+            <span class="plate-desc">LAB Luminance Equalization</span>
+          </div>
+        </div>
+
+        <!-- Plate 2: ESPCN Super-Resolution -->
+        <div class="plate-card">
+          <div class="plate-media">
+            <img id="plate-img-sr" src="" alt="ESPCN 2x Super-Resolution" />
+          </div>
+          <div class="plate-caption">
+            <span class="plate-name">2x ESPCN Super-Res</span>
+            <span class="plate-desc">Micro-Texture Magnification</span>
+          </div>
+        </div>
+
+        <!-- Plate 3: 2D FFT Harmonic Rosette Spectrum -->
+        <div class="plate-card">
+          <div class="plate-media">
+            <img id="plate-img-fft" src="" alt="2D FFT Magma Power Spectrum" />
+          </div>
+          <div class="plate-caption">
+            <span class="plate-name">2D FFT Rosette Spectrum</span>
+            <span class="plate-desc">Printer Screen Angle Harmonics</span>
+          </div>
+        </div>
+
+        <!-- Plate 4: Cyan Ink Separation Plate -->
+        <div class="plate-card">
+          <div class="plate-media">
+            <img id="plate-img-c" src="" alt="Cyan Separation Plate" />
+          </div>
+          <div class="plate-caption">
+            <span class="plate-name">Cyan Plate (C)</span>
+            <span class="plate-desc">Inkjet / Laser Dot Droplets</span>
+          </div>
+        </div>
+
+        <!-- Plate 5: Magenta Ink Separation Plate -->
+        <div class="plate-card">
+          <div class="plate-media">
+            <img id="plate-img-m" src="" alt="Magenta Separation Plate" />
+          </div>
+          <div class="plate-caption">
+            <span class="plate-name">Magenta Plate (M)</span>
+            <span class="plate-desc">Rosette Interference Grid</span>
+          </div>
+        </div>
+
+        <!-- Plate 6: Watermark Screen-Flash Delta -->
+        <div class="plate-card">
+          <div class="plate-media">
+            <img id="plate-img-wm" src="" alt="Watermark Delta Transmission Mask" />
+          </div>
+          <div class="plate-caption">
+            <span class="plate-name">Watermark Transmission</span>
+            <span class="plate-desc">Optical Screen-Flash Delta</span>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+  </div>
+
+  <!-- Hidden File Pickers -->
+  <input type="file" id="file-photo-input" accept="image/png, image/jpeg, image/webp" style="display:none;" />
+  <input type="file" id="file-video-input" accept="video/mp4, video/webm, video/quicktime" style="display:none;" />
+
+  <!-- Scripts -->
+  <script src="/static/js/audio.js?v=2.2"></script>
+  <script src="/static/js/app.js?v=2.2"></script>
+</body>
+</html>
+
