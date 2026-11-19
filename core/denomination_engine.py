@@ -190,6 +190,16 @@ class DenominationDeductionEngine:
 
             scores[denom] = float(final_score)
 
+        # Strict Background Gate: if CNN identified Background, or no currency profile fits
+        if cnn_probs and cnn_probs.get("Background", 0.0) >= 0.35:
+            return {
+                "denomination": "Background",
+                "confidence": 0.0,
+                "is_valid_currency": False,
+                "note_name": "No Currency in View",
+                "scores": scores
+            }
+
         # Select top denomination
         best_denom = max(scores, key=scores.get)
         best_val = scores[best_denom]

@@ -25,6 +25,7 @@ from .super_res_halftone import SuperResolutionModule, HalftoneDotDetector
 from .audio_feedback import DiscreetAudioEngine
 from .detector import BanknoteDetector
 from .denomination_engine import DenominationDeductionEngine
+from .security_validator import BanknoteSecurityValidator
 
 
 class CurrencyInspectionPipeline:
@@ -86,6 +87,7 @@ class CurrencyInspectionPipeline:
         # 5. Super-Resolution & Micro-Texture Halftone Detector
         self.super_res = SuperResolutionModule(scale_factor=2, device=device)
         self.halftone_detector = HalftoneDotDetector(fft_peak_threshold=16.0, dot_density_threshold=1.0)
+        self.security_validator = BanknoteSecurityValidator()
 
         # 6. Discreet Audio Engine
         self.audio_engine = DiscreetAudioEngine(debounce_interval_sec=1.5, enabled=enable_audio)
@@ -181,28 +183,46 @@ class CurrencyInspectionPipeline:
         is_currency = deduction["is_valid_currency"]
         note_name = deduction.get("note_name", denomination)
 
+        # Strict Background Gate: if CNN signals Background, suppress any false denomination
+        bg_prob = cnn_probs_dict.get("Background", 0.0)
+        if bg_prob >= 0.35:
+            is_currency = False
+            denomination = "Background"
+            note_name = "No Currency in View"
+
         # Step 5: Super-Resolution & CMYK Halftone Analysis
         sr_roi = self.super_res.upscale_roi(roi)
         halftone_metrics = self.halftone_detector.analyze_microtexture(sr_roi)
         halftone_score = halftone_metrics["halftone_score"]
         is_halftone = halftone_metrics["is_halftone_detected"]
 
-        # Step 6: Multi-Signal Counterfeit & Authenticity Deduction
+        # Step 6: Banknote Security Feature & Counterfeit Marker Validation
+        sec_results = self.security_validator.check_counterfeit_markers(note_crop)
+        is_toy_counterfeit = sec_results["is_toy_counterfeit"]
+        flagged_marker = sec_results["flagged_marker"]
+        marker_score = sec_results["max_marker_score"]
+
+        # Multi-Signal Counterfeit & Authenticity Deduction
         watermark_penalty = 0.0
         if cached_flash_delta is not None and "transmission_density" in cached_flash_delta:
             density = cached_flash_delta["transmission_density"]
             if density < 0.015:
                 watermark_penalty = 0.35
 
-        # Composite score
-        composite_counterfeit_score = float(
-            0.30 * counterfeit_cnn_prob +
-            0.55 * halftone_score +
-            0.15 * min(1.0, watermark_penalty)
-        )
+        # Composite score calculation
+        if is_toy_counterfeit:
+            composite_counterfeit_score = float(max(0.96, marker_score))
+            counterfeit_cnn_prob = max(counterfeit_cnn_prob, 0.95)
+        else:
+            composite_counterfeit_score = float(
+                0.30 * counterfeit_cnn_prob +
+                0.55 * halftone_score +
+                0.15 * min(1.0, watermark_penalty)
+            )
 
         # Determine Verdict & Detailed Reason
         if not is_note_detected or not is_currency or denomination == "Background":
+            is_note_detected = False
             verdict = "AWAITING CURRENCY NOTE"
             is_counterfeit = False
             denomination = "Background"
@@ -212,6 +232,10 @@ class CurrencyInspectionPipeline:
             composite_counterfeit_score = 0.0
             halftone_score = 0.0
             counterfeit_cnn_prob = 0.0
+        elif is_toy_counterfeit:
+            verdict = "SUSPECT / COUNTERFEIT"
+            is_counterfeit = True
+            authenticity_reason = f"Counterfeit / Toy Banknote Detected ({flagged_marker})"
         elif is_halftone:
             verdict = "SUSPECT / COUNTERFEIT"
             is_counterfeit = True

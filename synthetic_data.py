@@ -60,19 +60,49 @@ class SyntheticCurrencyGenerator:
             img, str(denomination), (int(width * 0.72), int(height * 0.38)),
             cv2.FONT_HERSHEY_DUPLEX, 1.8, (30, 30, 30), 4, cv2.LINE_AA
         )
-        cv2.putText(
-            img, f"RESERVE BANK", (int(width * 0.35), int(height * 0.22)),
-            cv2.FONT_HERSHEY_SIMPLEX, 0.75, (20, 20, 20), 2, cv2.LINE_AA
-        )
+        
+        if not is_counterfeit:
+            header_text = "RESERVE BANK OF INDIA"
+            cv2.putText(
+                img, header_text, (int(width * 0.30), int(height * 0.22)),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.65, (20, 20, 20), 2, cv2.LINE_AA
+            )
+        else:
+            header_text = "CHILDREN BANK OF INDIA"
+            cv2.putText(
+                img, header_text, (int(width * 0.28), int(height * 0.22)),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.65, (30, 30, 30), 2, cv2.LINE_AA
+            )
+            cv2.putText(
+                img, "FULL OF FUN", (int(width * 0.08), int(height * 0.25)),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (25, 25, 25), 2, cv2.LINE_AA
+            )
+            cv2.putText(
+                img, "FULL OF FUN", (int(width * 0.68), int(height * 0.90)),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (25, 25, 25), 2, cv2.LINE_AA
+            )
 
         # Left Watermark Window Oval
         wm_center = (int(width * 0.20), int(height * 0.52))
         cv2.ellipse(img, wm_center, (int(width * 0.10), int(height * 0.32)), 0, 0, 360, (235, 235, 240), -1)
         cv2.ellipse(img, wm_center, (int(width * 0.10), int(height * 0.32)), 0, 0, 360, (180, 180, 180), 1)
 
-        # Embedded security thread
+        # Embedded security thread / strip
         thread_x = int(width * 0.42)
-        cv2.line(img, (thread_x, 12), (thread_x, height - 12), (40, 40, 40), 3)
+        if not is_counterfeit:
+            cv2.line(img, (thread_x, 12), (thread_x, height - 12), (40, 40, 40), 3)
+        else:
+            # Imitation strip on right side with CHURAN LABEL
+            strip_x = int(width * 0.82)
+            cv2.rectangle(img, (strip_x - 12, 12), (strip_x + 12, height - 12), (60, 140, 90), -1)
+            cv2.putText(
+                img, "CHURAN", (strip_x - 8, int(height * 0.45)),
+                cv2.FONT_HERSHEY_PLAIN, 0.9, (20, 20, 20), 1, cv2.LINE_AA
+            )
+            cv2.putText(
+                img, "LABEL", (strip_x - 8, int(height * 0.60)),
+                cv2.FONT_HERSHEY_PLAIN, 0.9, (20, 20, 20), 1, cv2.LINE_AA
+            )
 
         if not is_counterfeit:
             # GENUINE CURRENCY FEATURES:

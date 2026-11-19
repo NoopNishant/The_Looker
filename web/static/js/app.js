@@ -78,6 +78,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnDemoCompare = document.getElementById('btn-demo-compare');
   const btnDemoGenuine = document.getElementById('btn-demo-genuine');
   const btnDemoCounterfeit = document.getElementById('btn-demo-counterfeit');
+  const btnDemoToy = document.getElementById('btn-demo-toy');
   const comparisonSection = document.getElementById('comparison-section');
 
   // Comparison UI Elements
@@ -144,7 +145,13 @@ document.addEventListener('DOMContentLoaded', () => {
       startLiveStream();
     } else if (mode === 'photo') {
       document.getElementById('viewport-heading').innerText = 'Photo Forensics Viewport';
-      dropzoneBox.style.display = 'flex';
+      if (photoPreview.src && photoPreview.src.length > 50 && !photoPreview.src.includes('data:image/svg')) {
+        dropzoneBox.style.display = 'none';
+        photoPreview.style.display = 'block';
+      } else {
+        dropzoneBox.style.display = 'flex';
+        photoPreview.style.display = 'none';
+      }
       btnUploadTrigger.style.display = 'inline-flex';
       btnUploadTrigger.innerText = 'Choose Photo';
     } else if (mode === 'video') {
@@ -152,14 +159,22 @@ document.addEventListener('DOMContentLoaded', () => {
       dropzoneBox.style.display = 'flex';
       btnUploadTrigger.style.display = 'inline-flex';
       btnUploadTrigger.innerText = 'Choose Video';
-    } else if (mode === 'synthetic' || mode === 'compare') {
-      document.getElementById('viewport-heading').innerText = mode === 'compare' ? 'Side-by-Side Dual Comparison Lab' : 'Synthetic Algorithmic Bench';
+    } else if (mode === 'synthetic') {
+      document.getElementById('viewport-heading').innerText = 'Synthetic Algorithmic Bench';
+      photoPreview.src = '';
       photoPreview.style.display = 'block';
+      syntheticBar.style.display = 'flex';
+      if (comparisonSection) comparisonSection.style.display = 'none';
+      const initialDenom = benchDenomSelect ? benchDenomSelect.value : '50';
+      triggerSyntheticDemo(initialDenom, false);
+    } else if (mode === 'compare') {
+      document.getElementById('viewport-heading').innerText = 'Side-by-Side Dual Comparison Lab';
+      photoPreview.style.display = 'none';
       syntheticBar.style.display = 'flex';
       if (comparisonSection) {
         comparisonSection.style.display = 'block';
       }
-      const initialDenom = benchDenomSelect ? benchDenomSelect.value : '500';
+      const initialDenom = benchDenomSelect ? benchDenomSelect.value : '50';
       triggerComparisonDemo(initialDenom);
     }
 
@@ -417,7 +432,7 @@ document.addEventListener('DOMContentLoaded', () => {
       ctx.fillRect(x1, y1, x2 - x1, y2 - y1);
     } else {
       // Default guide box in center (standard banknote proportion)
-      const boxW = Math.min(420, Math.round(w * 0.70));
+      const boxW = Math.min(380, Math.round(w * 0.50));
       const boxH = Math.round(boxW / 2.05);
       x1 = Math.round((w - boxW) / 2);
       y1 = Math.round((h - boxH) / 2);
@@ -699,9 +714,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
   if (btnDemoCounterfeit) {
     btnDemoCounterfeit.addEventListener('click', () => {
-      const denom = benchDenomSelect ? benchDenomSelect.value : '500';
+      const denom = benchDenomSelect ? benchDenomSelect.value : '50';
       if (comparisonSection) comparisonSection.style.display = 'none';
-      triggerSyntheticDemo(denom, true);
+      triggerSyntheticDemo(denom, true, 'cmyk');
+    });
+  }
+
+  if (btnDemoToy) {
+    btnDemoToy.addEventListener('click', () => {
+      if (benchDenomSelect) benchDenomSelect.value = 'toy_50';
+      if (comparisonSection) comparisonSection.style.display = 'none';
+      triggerSyntheticDemo('toy_50', true, 'toy');
     });
   }
 
@@ -710,14 +733,19 @@ document.addEventListener('DOMContentLoaded', () => {
       const denom = benchDenomSelect.value;
       if (comparisonSection && comparisonSection.style.display !== 'none') {
         triggerComparisonDemo(denom);
+      } else if (denom === 'toy_50') {
+        triggerSyntheticDemo('toy_50', true, 'toy');
       } else {
         triggerSyntheticDemo(denom, false);
       }
     });
   }
 
-  async function triggerSyntheticDemo(denom, isCounterfeit) {
-    document.getElementById('engine-status-text').innerText = 'GENERATING SYNTHETIC SAMPLE...';
+  async function triggerSyntheticDemo(denom, isCounterfeit, type) {
+    document.getElementById('engine-status-text').innerText = 'GENERATING FORENSIC BENCH SAMPLE...';
+
+    const counterfeitType = type || (denom === 'toy_50' ? 'toy' : (isCounterfeit ? 'cmyk' : 'none'));
+    const isCf = isCounterfeit || denom === 'toy_50';
 
     try {
       const resp = await fetch('/api/generate-demo', {
@@ -725,7 +753,8 @@ document.addEventListener('DOMContentLoaded', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           denomination: denom,
-          is_counterfeit: isCounterfeit
+          is_counterfeit: isCf,
+          counterfeit_type: counterfeitType
         })
       });
       const data = await resp.json();
@@ -769,6 +798,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       // Populate Authentic Card
+      if (photoPreview && gen.sample_image) photoPreview.src = gen.sample_image;
       if (cmpGenFull && gen.sample_image) cmpGenFull.src = gen.sample_image;
       if (cmpGenScore) cmpGenScore.innerText = `${(gen.composite_counterfeit_score || 0.05).toFixed(2)} RISK`;
       if (cmpGenVerdict) cmpGenVerdict.innerText = gen.verdict || 'VERIFIED GENUINE';

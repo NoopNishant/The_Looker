@@ -44,7 +44,11 @@ Thumbs.db
 desktop.ini
 
 # Training datasets (downloaded externally, ~90MB+)
-data/
+data/kaggle_indian_currency/
+data/negative_samples/
+data/real_crops_50/
+!data/counterfeit_templates/
+!data/counterfeit_templates/**
 
 # Temporary test/debug image captures in root
 *.jpg
@@ -52,6 +56,7 @@ data/
 *.png
 !output/*.png
 !web/static/**
+!data/counterfeit_templates/**
 
 # Test/inspection run outputs
 output/
