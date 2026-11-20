@@ -19,7 +19,9 @@ A high-performance edge computer vision and forensic analysis platform engineere
   - **Photos (PNG, JPG, WEBP)**: Instant drag-and-drop forensic breakdown with all 6 multi-spectral micro-texture inspection plates.
   - **Videos (MP4, MOV, WEBM)**: Timeline keyframe decomposition showing per-frame verdicts, thumbnail strips, and average counterfeit score.
 - **Synthetic Demonstration Bench**:
-  - 1-click test buttons to instantly inspect authentic intaglio notes vs. CMYK halftone counterfeits without requiring physical cash.
+  - 1-click test buttons to instantly inspect authentic intaglio notes vs. CMYK halftone counterfeits vs. commercial toy fake notes ("Children Bank of India", "Full of Fun", "Churan Label") without requiring physical cash.
+- **Side-by-Side Comparative Lab**:
+  - Dual comparative inspection rendering Authentic Intaglio vs. Counterfeit plates simultaneously.
 - **Discreet Web Audio API Synthesizer**:
   - Pure in-browser acoustic rhythm synthesis mapped to each denomination without disruptive Text-to-Speech.
 
@@ -54,7 +56,14 @@ A high-performance edge computer vision and forensic analysis platform engineere
      - **COUNTERFEIT / SUSPECT**: Urgent discordant dual-sawtooth buzz (180 Hz + 194 Hz)
    - Zero-latency asynchronous playback via Windows `winsound` in-memory buffers with automatic debouncing.
 
-5. **Hardware Performance**:
+5. **Banknote Security Feature & Toy Counterfeit Validator**:
+   - Multi-scale normalized template matching targeting unauthorized commercial toy banknote markers:
+     - Header spoofing: `"CHILDREN BANK OF INDIA"` and `"भारतीय बच्चों का बैंक"` vs. authentic `"RESERVE BANK OF INDIA"`.
+     - Security thread imitation: `"CHURAN LABEL"` printed bands on the right border.
+     - Denomination & watermark spoofing: `"FULL OF FUN"`.
+   - Continuous directional gradient relief variance analysis for authentic intaglio embossing vs flat photocopies.
+
+6. **Hardware Performance**:
    - Benchmarked on 1080p frames at **~27–33 FPS** on standard laptop CPU (>15 FPS requirement exceeded).
 
 ---
@@ -66,10 +75,21 @@ The Looker/
 ├── core/
 │   ├── __init__.py
 │   ├── model.py              # MultiTaskMobileNetV3 & joint loss
+│   ├── detector.py           # Banknote contour & centrality-weighted reticle localization
+│   ├── denomination_engine.py# Illumination-invariant chromaticity & centroid deduction
+│   ├── security_validator.py # Multi-scale toy counterfeit & marker verification
 │   ├── preprocessing.py      # LAB CLAHE & Screen-Flash Differencing
 │   ├── super_res_halftone.py # ESPCN Super-Resolution & CMYK FFT Dot Detector
 │   ├── audio_feedback.py     # NumPy acoustic waveform synthesizer & async engine
 │   └── pipeline.py           # Unified real-time inspection engine
+├── web/
+│   ├── app.py                # FastAPI ASGI backend (<25ms frame streaming)
+│   ├── templates/index.html  # Minimalist editorial UI with Synthetic Bench & Dual Lab
+│   └── static/               # Styling (CSS), client streaming, and Web Audio API (JS)
+├── data/
+│   └── counterfeit_templates/# Known toy fake note templates
+├── models/
+│   └── currency_mobilenet_v3.pth # Trained multi-task neural network weights
 ├── utils/
 │   ├── __init__.py
 │   └── visualizer.py         # Real-time HUD, diagnostic panels, and gauges
@@ -79,8 +99,11 @@ The Looker/
 │   ├── test_preprocessing.py # CLAHE & screen-flash tests
 │   ├── test_super_res.py     # ESPCN upscaler & halftone FFT tests
 │   ├── test_audio.py         # Acoustic pulse & WAV byte header tests
+│   ├── test_live_deduction.py# Live banknote deduction & authenticity tests
 │   └── benchmark_fps.py      # End-to-end 1080p CPU FPS benchmark (>15 FPS)
-├── synthetic_data.py         # Algorithmic banknote generator (genuine & counterfeit)
+├── train_currency_model.py   # Multi-scenario curriculum training script
+├── synthetic_data.py         # Algorithmic banknote generator (genuine, rosette & toy fakes)
+├── run_web.py                # All-in-one autonomous web studio launcher
 ├── main.py                   # Real-time CLI & GUI application runner
 └── README.md
 ```
