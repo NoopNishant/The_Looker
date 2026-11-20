@@ -22,11 +22,12 @@ import uvicorn
 
 def print_banner(host: str, port: int) -> None:
     """Print aesthetic minimalist terminal banner."""
+    display_host = "127.0.0.1" if host in ("0.0.0.0", "") else host
     print("\n" + "=" * 68, flush=True)
     print("  THE LOOKER : Forensic Currency Studio v2.2", flush=True)
     print("  Real-Time Banknote Recognition & Counterfeit Detection Platform", flush=True)
     print("=" * 68, flush=True)
-    print(f"  • Local Interface : http://{host}:{port}", flush=True)
+    print(f"  • Local Interface : http://{display_host}:{port}  (or http://localhost:{port})", flush=True)
     print(f"  • Device / Engine : MobileNetV3 (CPU) + 2x Neural ESPCN Super-Res", flush=True)
     print(f"  • Forensics Plates: CLAHE Micro-Relief, CMYK Halftone FFT, Screen-Flash", flush=True)
     print(f"  • Live Stream Feed: Active (Real-Time Sub-25ms Binary Stream)", flush=True)
@@ -84,12 +85,13 @@ def launch_browser(host: str, port: int, enabled: bool = True, timeout_sec: floa
         return
 
     def _worker():
-        url = f"http://{host}:{port}"
+        test_host = "127.0.0.1" if host in ("0.0.0.0", "") else host
+        url = f"http://127.0.0.1:{port}"
         t0 = time.time()
         connected = False
         while time.time() - t0 < timeout_sec:
             try:
-                with socket.create_connection((host, port), timeout=0.3):
+                with socket.create_connection((test_host, port), timeout=0.3):
                     connected = True
                     break
             except (ConnectionRefusedError, OSError):
@@ -98,9 +100,12 @@ def launch_browser(host: str, port: int, enabled: bool = True, timeout_sec: floa
         if connected:
             print(f"[3/3] Opening Forensic Studio in default browser: {url}\n", flush=True)
             try:
+                if sys.platform == "win32":
+                    subprocess.Popen(f'start "" "{url}"', shell=True)
+                else:
+                    webbrowser.open(url)
+            except Exception:
                 webbrowser.open(url)
-            except Exception as e:
-                print(f"      [!] Open browser manually at {url} ({e})", flush=True)
         else:
             print(f"[3/3] Studio ready. Open in browser: {url}\n", flush=True)
 
@@ -111,7 +116,7 @@ def launch_browser(host: str, port: int, enabled: bool = True, timeout_sec: floa
 def main():
     parser = argparse.ArgumentParser(description="The Looker - Currency Forensics Web Studio")
     parser.add_argument("--port", type=int, default=8000, help="Port to bind (default: 8000)")
-    parser.add_argument("--host", type=str, default="127.0.0.1", help="Host interface (default: 127.0.0.1)")
+    parser.add_argument("--host", type=str, default="0.0.0.0", help="Host interface (default: 0.0.0.0)")
     parser.add_argument("--no-browser", action="store_true", help="Do not automatically launch web browser")
     args = parser.parse_args()
 
@@ -123,7 +128,7 @@ def main():
     ensure_port_available(port)
     prewarm_pipeline()
 
-    print(f"[2/3] Launching Web Studio Engine on http://{host}:{port}...", flush=True)
+    print(f"[2/3] Launching Web Studio Engine on http://127.0.0.1:{port}...", flush=True)
     launch_browser(host, port, enabled=auto_browser)
 
     print("• Press CTRL+C at any time to stop the server.\n", flush=True)
