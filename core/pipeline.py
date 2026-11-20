@@ -118,7 +118,8 @@ class CurrencyInspectionPipeline:
         self,
         bgr_frame: np.ndarray,
         cached_flash_delta: Optional[Dict[str, np.ndarray]] = None,
-        roi_bbox: Optional[Tuple[int, int, int, int]] = None
+        roi_bbox: Optional[Tuple[int, int, int, int]] = None,
+        is_pre_cropped: bool = False
     ) -> Dict[str, Union[str, float, bool, np.ndarray, Dict]]:
         """
         Execute full inspection pass on incoming camera frame.
@@ -127,6 +128,7 @@ class CurrencyInspectionPipeline:
             bgr_frame: Raw 1080p or preview BGR frame.
             cached_flash_delta: Optional pre-computed screen-flash difference result.
             roi_bbox: Optional custom ROI coordinates (x1, y1, x2, y2).
+            is_pre_cropped: If True, treats frame as pre-cropped banknote image.
         Returns:
             Comprehensive diagnostic dictionary.
         """
@@ -135,7 +137,7 @@ class CurrencyInspectionPipeline:
         h, w = bgr_frame.shape[:2]
 
         # Step 0: Auto-Detect Banknote in Live Feed
-        detection = self.detector.detect(bgr_frame)
+        detection = self.detector.detect(bgr_frame, is_pre_cropped=is_pre_cropped)
         is_note_detected = detection["detected"]
         detected_bbox = detection["bbox"]
         corners = detection.get("corners")
@@ -183,8 +185,49 @@ class CurrencyInspectionPipeline:
         is_currency = deduction["is_valid_currency"]
         note_name = deduction.get("note_name", denomination)
 
-        # Strict Background Gate: if CNN signals Background, suppress any false denomination
+        # Strict Background Gate with Guided Reticle Fallback:
         bg_prob = cnn_probs_dict.get("Background", 0.0)
+        if bg_prob >= 0.35:
+            # If a false contour was picked up (e.g. clothing), check the central guided reticle
+            if detection.get("strategy") == "contour_quad" and "default_crop" in detection:
+                reticle_crop = detection["default_crop"]
+                if reticle_crop is not None and reticle_crop.size > 0:
+                    r_h, r_w = reticle_crop.shape[:2]
+                    if r_h > 360 or r_w > 640:
+                        s_r = 360.0 / r_h
+                        r_prev = cv2.resize(reticle_crop, (int(r_w * s_r), 360), interpolation=cv2.INTER_AREA)
+                    else:
+                        r_prev = reticle_crop
+                    rgb_r = cv2.cvtColor(r_prev, cv2.COLOR_BGR2RGB)
+                    t_r = self.tensor_transform(rgb_r).unsqueeze(0).to(self.device)
+                    with torch.inference_mode():
+                        nn_out_r = self.model.forward(t_r)
+                        probs_r = torch.softmax(nn_out_r["denomination_logits"][0], dim=-1)
+                        cnn_probs_r = {
+                            self.model.denominations[i]: probs_r[i].item()
+                            for i in range(min(len(self.model.denominations), probs_r.shape[0]))
+                        }
+                    if cnn_probs_r.get("Background", 0.0) < 0.35:
+                        note_crop = reticle_crop
+                        is_note_detected = True
+                        def_bbox = detection.get("default_bbox", (0, 0, w, h))
+                        detected_bbox = def_bbox
+                        corners = [
+                            [def_bbox[0], def_bbox[1]],
+                            [def_bbox[0] + def_bbox[2], def_bbox[1]],
+                            [def_bbox[0] + def_bbox[2], def_bbox[1] + def_bbox[3]],
+                            [def_bbox[0], def_bbox[1] + def_bbox[3]]
+                        ]
+                        cnn_probs_dict = cnn_probs_r
+                        counterfeit_cnn_prob = nn_out_r["counterfeit_prob"][0].item()
+                        deduction = self.denom_engine.deduce_denomination(note_crop, cnn_probs=cnn_probs_dict)
+                        denomination = deduction["denomination"]
+                        confidence = deduction["confidence"]
+                        is_currency = deduction["is_valid_currency"]
+                        note_name = deduction.get("note_name", denomination)
+                        bg_prob = cnn_probs_r.get("Background", 0.0)
+                        roi, _ = self.extract_central_roi(note_crop)
+
         if bg_prob >= 0.35:
             is_currency = False
             denomination = "Background"

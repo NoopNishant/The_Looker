@@ -116,20 +116,7 @@ class DenominationDeductionEngine:
         median_hue = float(np.median(hsv[:, :, 0]))
         mean_sat = float(np.mean(hsv[:, :, 1]))
 
-        # High-order ink discrimination
-        b_channel = central_bgr[:, :, 0].astype(np.float32)
-        g_channel = central_bgr[:, :, 1].astype(np.float32)
-        r_channel = central_bgr[:, :, 2].astype(np.float32)
-        tot_light = b_channel + g_channel + r_channel + 1e-5
-        b_ratio_grid = b_channel / tot_light
-        median_b_ratio = float(np.median(b_ratio_grid))
-        
-        # Cyan/Blue ink presence (crucial for distinguishing ₹50 Fluorescent Blue from ₹20 Yellow and ₹10 Brown)
-        cyan_pixels = (b_channel > r_channel) | ((g_channel > r_channel) & (b_channel > 115.0))
-        cyan_frac = float(np.mean(cyan_pixels))
-
-        is_warm_webcam_50 = (median_hue <= 38.0 and cyan_frac >= 0.35 and mean_sat >= 20.0)
-
+        # Balanced multi-cue likeness evaluation across all denominations
         scores: Dict[str, float] = {}
 
         for denom, prof in cls.PROFILES.items():
@@ -137,56 +124,27 @@ class DenominationDeductionEngine:
             target_hue = prof["hue_center"]
             target_ar = prof["target_aspect"]
 
-            # 1. Chromaticity distance (Euclidean in normalized r-g-b space)
+            # 1. Normalized chromaticity distance (Euclidean in r-g-b space)
             dist_chroma = float(np.linalg.norm(mean_chroma - target_chroma))
-            score_chroma = np.exp(-14.0 * (dist_chroma ** 2))
+            score_chroma = np.exp(-12.0 * (dist_chroma ** 2))
 
-            # 2. Hue distance & Color Modulation
+            # 2. Angular hue distance (symmetric Gaussian Likelihood)
             hue_diff = min(abs(median_hue - target_hue), 180.0 - abs(median_hue - target_hue))
-            if denom == "500":
-                # ₹500 Stone Gray: Gaussian hue likeness around target hue
-                score_hue = np.exp(-0.5 * ((hue_diff / 20.0) ** 2))
-                if is_warm_webcam_50:
-                    score_hue *= 0.35
-            elif denom == "50":
-                # ₹50 Fluorescent Blue:
-                # Under warm indoor webcam lighting, the cyan base shifts to median_hue ~28-35 with cyan ink present
-                if is_warm_webcam_50:
-                    score_chroma = 0.95
-                    score_hue = 0.90
-                else:
-                    score_hue = np.exp(-0.5 * ((hue_diff / 18.0) ** 2)) * min(1.0, mean_sat / 25.0)
-            elif denom == "20":
-                # ₹20 Greenish Yellow has zero blue/cyan ink (cyan_frac < 0.10 and b_ratio < 0.25)
-                if cyan_frac > 0.25 or median_b_ratio > 0.28:
-                    score_hue = 0.05  # Strongly penalized if blue/cyan present
-                else:
-                    score_hue = np.exp(-0.5 * ((hue_diff / 18.0) ** 2))
-            elif denom == "10":
-                # ₹10 Chocolate Brown: dull brown, zero cyan ink
-                if cyan_frac > 0.25 or median_b_ratio > 0.28:
-                    score_hue = 0.05
-                else:
-                    score_hue = np.exp(-0.5 * ((hue_diff / 18.0) ** 2)) * max(0.25, 1.0 - max(0.0, (mean_sat - 90.0) / 70.0))
-            elif denom == "200":
-                # ₹200 Bright Orange: very high saturation, zero cyan ink
-                if cyan_frac > 0.25:
-                    score_hue = 0.05
-                else:
-                    score_hue = np.exp(-0.5 * ((hue_diff / 18.0) ** 2)) * min(1.0, mean_sat / 110.0)
-            else:
-                score_hue = np.exp(-0.5 * ((hue_diff / 18.0) ** 2))
+            score_hue = np.exp(-0.5 * ((hue_diff / 24.0) ** 2))
 
             # 3. Dimensional aspect ratio
             ar_diff = abs(aspect_ratio - target_ar)
-            score_ar = max(0.4, np.exp(-0.5 * ((ar_diff / 0.5) ** 2)))
+            score_ar = max(0.40, np.exp(-0.5 * ((ar_diff / 0.5) ** 2)))
 
-            # Combined optical likeness
-            optical_like = 0.55 * score_chroma + 0.30 * score_hue + 0.15 * score_ar
+            # Combined optical likeness (balanced equally across all denominations)
+            optical_like = 0.50 * score_chroma + 0.35 * score_hue + 0.15 * score_ar
 
-            # Fold in CNN score if provided
-            cnn_score = cnn_probs.get(denom, 0.20) if cnn_probs else 0.40
-            final_score = 0.70 * optical_like + 0.30 * cnn_score
+            # Multi-cue fusion with CNN semantic probability
+            if cnn_probs:
+                cnn_score = float(cnn_probs.get(denom, 0.0))
+                final_score = 0.75 * cnn_score + 0.25 * optical_like
+            else:
+                final_score = optical_like
 
             scores[denom] = float(final_score)
 
@@ -208,7 +166,7 @@ class DenominationDeductionEngine:
         score_vals = list(scores.values())
         sorted_scores = sorted(score_vals, reverse=True)
         margin = sorted_scores[0] - (sorted_scores[1] if len(sorted_scores) > 1 else 0.0)
-        confidence = float(np.clip(0.78 + margin * 0.45, 0.75, 0.98))
+        confidence = float(np.clip(0.78 + margin * 0.40, 0.72, 0.99))
 
         return {
             "denomination": best_denom,

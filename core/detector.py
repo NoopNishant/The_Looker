@@ -90,7 +90,11 @@ class BanknoteDetector:
         except Exception:
             return []
 
-    def detect(self, bgr_frame: np.ndarray) -> Dict[str, Union[bool, Tuple, np.ndarray, float, List]]:
+    def detect(
+        self,
+        bgr_frame: np.ndarray,
+        is_pre_cropped: bool = False
+    ) -> Dict[str, Union[bool, Tuple, np.ndarray, float, List]]:
         """
         Locate currency note in live camera frame while strictly rejecting faces.
         """
@@ -101,11 +105,23 @@ class BanknoteDetector:
                 "cropped_note": None,
                 "confidence": 0.0,
                 "corners": None,
-                "strategy": "empty"
+                "strategy": "empty",
+                "default_crop": None,
+                "default_bbox": (0, 0, 100, 100)
             }
 
         h, w = bgr_frame.shape[:2]
         frame_ar = w / float(max(1, h))
+
+        # Define default central guided bounding box (50% width, standard ~2.05 aspect ratio)
+        guide_w = int(w * 0.50)
+        guide_h = int(guide_w / 2.05)
+        gx1 = max(0, (w - guide_w) // 2)
+        gy1 = max(0, (h - guide_h) // 2)
+        gx2 = min(w, gx1 + guide_w)
+        gy2 = min(h, gy1 + guide_h)
+        default_bbox = (gx1, gy1, gx2 - gx1, gy2 - gy1)
+        default_crop = bgr_frame[gy1:gy2, gx1:gx2].copy()
 
         # Scale down for fast processing (<5ms)
         proc_scale = 360.0 / max(h, w)
@@ -118,34 +134,43 @@ class BanknoteDetector:
         detected_faces = self.detect_faces(gray)
         face_area_ratio = sum(fw * fh for fx, fy, fw, fh in detected_faces) / float(max(1, proc_w * proc_h))
 
+        # Explicit pre-cropped override (e.g. synthetic bench, dataset crop, or uploaded note photo)
+        if is_pre_cropped:
+            self.smooth_bbox = (0.0, 0.0, float(w), float(h))
+            return {
+                "detected": True,
+                "bbox": (0, 0, w, h),
+                "corners": [[0, 0], [w, 0], [w, h], [0, h]],
+                "cropped_note": bgr_frame,
+                "confidence": 0.98,
+                "strategy": "full_banknote_frame",
+                "default_crop": default_crop,
+                "default_bbox": default_bbox
+            }
+
         # Step 0: Check if input image is ALREADY a pre-cropped banknote
-        # Uploaded banknote photos or synthetic notes strictly range from 1.92 to 2.65
-        # Standard 16:9 (1.778) and 4:3 (1.333) webcams are scene views and MUST NOT trigger full_frame!
-        if 1.92 <= frame_ar <= 2.65 and face_area_ratio < 0.35:
+        # Uploaded banknote photos strictly range from 1.50 to 2.85 (or portrait 0.35 to 0.67)
+        long_ar = max(frame_ar, 1.0 / max(1e-4, frame_ar))
+        if 1.50 <= long_ar <= 2.85 and face_area_ratio < 0.35:
             full_edge_dens = self.compute_edge_density(gray)
             full_tex = self.compute_texture_energy(gray)
             full_skin = self.compute_skin_ratio(small)
             # Accept if high print/edge density and not pure smooth skin
-            if (full_edge_dens > 0.025 or full_tex > 35.0) and not (full_skin > 0.85 and full_edge_dens < 0.025):
-                self.smooth_bbox = (0.0, 0.0, float(w), float(h))
-                return {
-                    "detected": True,
-                    "bbox": (0, 0, w, h),
-                    "corners": [[0, 0], [w, 0], [w, h], [0, h]],
-                    "cropped_note": bgr_frame,
-                    "confidence": 0.98,
-                    "strategy": "full_banknote_frame"
-                }
-
-        # Define default central guided bounding box (50% width, standard ~2.05 aspect ratio)
-        guide_w = int(w * 0.50)
-        guide_h = int(guide_w / 2.05)
-        gx1 = max(0, (w - guide_w) // 2)
-        gy1 = max(0, (h - guide_h) // 2)
-        gx2 = min(w, gx1 + guide_w)
-        gy2 = min(h, gy1 + guide_h)
-        default_bbox = (gx1, gy1, gx2 - gx1, gy2 - gy1)
-        default_crop = bgr_frame[gy1:gy2, gx1:gx2].copy()
+            # For 16:9 standard webcam scene (AR ~1.78), only accept full frame if not a human scene
+            is_webcam_scene = (1.70 <= frame_ar <= 1.85) and (len(detected_faces) > 0 or full_skin > 0.35)
+            if not is_webcam_scene:
+                if (full_edge_dens > 0.020 or full_tex > 30.0) and not (full_skin > 0.85 and full_edge_dens < 0.025):
+                    self.smooth_bbox = (0.0, 0.0, float(w), float(h))
+                    return {
+                        "detected": True,
+                        "bbox": (0, 0, w, h),
+                        "corners": [[0, 0], [w, 0], [w, h], [0, h]],
+                        "cropped_note": bgr_frame,
+                        "confidence": 0.98,
+                        "strategy": "full_banknote_frame",
+                        "default_crop": default_crop,
+                        "default_bbox": default_bbox
+                    }
 
         # Step 1: Multi-candidate contour polygon analysis
         blurred = cv2.GaussianBlur(gray, (5, 5), 0)
@@ -238,9 +263,30 @@ class BanknoteDetector:
             norm_cx = (cx_r - proc_w / 2.0) / (proc_w / 2.0)
             norm_cy = (cy_r - proc_h / 2.0) / (proc_h / 2.0)
             center_dist = float(np.sqrt(norm_cx ** 2 + norm_cy ** 2))
-            center_score = max(0.20, 1.0 - (center_dist / 1.35))
+            center_score = max(0.05, 1.0 - (center_dist / 1.15))
 
-            score = 0.35 * ar_score + 0.25 * min(1.0, edge_dens * 12.0) + 0.15 * rectangularity + 0.10 * area_score + 0.15 * center_score
+            # Overlap with guided central reticle
+            pgx1 = int(gx1 * proc_scale)
+            pgy1 = int(gy1 * proc_scale)
+            pgx2 = int(gx2 * proc_scale)
+            pgy2 = int(gy2 * proc_scale)
+            ix1 = max(x, pgx1)
+            iy1 = max(y, pgy1)
+            ix2 = min(x + bw, pgx2)
+            iy2 = min(y + bh, pgy2)
+            if ix2 > ix1 and iy2 > iy1:
+                overlap_ratio = float((ix2 - ix1) * (iy2 - iy1)) / float(max(1, bw * bh))
+            else:
+                overlap_ratio = 0.0
+
+            score = (
+                0.25 * ar_score +
+                0.20 * min(1.0, edge_dens * 12.0) +
+                0.15 * rectangularity +
+                0.10 * area_score +
+                0.15 * center_score +
+                0.15 * overlap_ratio
+            )
 
             if score > best_score:
                 best_score = score
@@ -253,7 +299,7 @@ class BanknoteDetector:
                 best_corners = box_pts.astype(np.int32).tolist()
 
         # If a verified contour quad is detected
-        if best_bbox is not None and best_score >= 0.42:
+        if best_bbox is not None and best_score >= 0.44:
             bx, by, bw, bh = best_bbox
             bx1 = max(0, bx)
             by1 = max(0, by)
@@ -289,7 +335,9 @@ class BanknoteDetector:
                 "corners": best_corners,
                 "cropped_note": cropped if cropped.size > 0 else default_crop,
                 "confidence": float(np.clip(best_score * 1.1, 0.60, 0.98)),
-                "strategy": "contour_quad"
+                "strategy": "contour_quad",
+                "default_crop": default_crop,
+                "default_bbox": default_bbox
             }
 
         # Step 2: Guided Central Reticle Presence
@@ -320,7 +368,7 @@ class BanknoteDetector:
             crop_skin = self.compute_skin_ratio(default_crop)
 
             # High print/intaglio density in reticle without being bare skin
-            if (crop_edge >= 0.028 or crop_tex >= 35.0) and not (crop_skin > 0.75 and crop_edge < 0.025):
+            if (crop_edge >= 0.024 or crop_tex >= 30.0) and not (crop_skin > 0.75 and crop_edge < 0.025):
                 self.miss_counter = 0
                 return {
                     "detected": True,
@@ -328,7 +376,9 @@ class BanknoteDetector:
                     "corners": [[gx1, gy1], [gx2, gy1], [gx2, gy2], [gx1, gy2]],
                     "cropped_note": default_crop,
                     "confidence": 0.88,
-                    "strategy": "guided_reticle"
+                    "strategy": "guided_reticle",
+                    "default_crop": default_crop,
+                    "default_bbox": default_bbox
                 }
 
         # Step 3: Standby (empty frame, user face, or smooth clothes)
@@ -342,5 +392,7 @@ class BanknoteDetector:
             "corners": None,
             "cropped_note": default_crop,
             "confidence": 0.0,
-            "strategy": "standby"
+            "strategy": "standby",
+            "default_crop": default_crop,
+            "default_bbox": default_bbox
         }

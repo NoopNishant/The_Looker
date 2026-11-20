@@ -198,7 +198,9 @@ async def inspect_uploaded_image(request: Request):
     amb, fl = ScreenFlashDifferencing.simulate_screen_flash(frame)
     flash_delta = pipeline.flash_differencer.compute_difference(amb, fl)
 
-    results = pipeline.process_frame(frame, cached_flash_delta=flash_delta)
+    det_check = pipeline.detector.detect(frame)
+    is_pre = det_check.get("strategy") in ["full_banknote_frame", "standby", "guided_reticle"]
+    results = pipeline.process_frame(frame, cached_flash_delta=flash_delta, is_pre_cropped=is_pre)
     serialized = serialize_inspection_results(results, include_images=True)
     serialized["filename"] = filename
     serialized["resolution"] = f"{frame.shape[1]}x{frame.shape[0]}"
@@ -316,7 +318,7 @@ async def generate_synthetic_demo(request: Request):
     amb, fl = ScreenFlashDifferencing.simulate_screen_flash(frame)
     flash_delta = pipeline.flash_differencer.compute_difference(amb, fl)
 
-    results = pipeline.process_frame(frame, cached_flash_delta=flash_delta)
+    results = pipeline.process_frame(frame, cached_flash_delta=flash_delta, is_pre_cropped=True)
     serialized = serialize_inspection_results(results, include_images=True)
     serialized["sample_image"] = image_to_base64(frame)
     serialized["sample_type"] = sample_label
@@ -347,7 +349,7 @@ async def compare_synthetic_demo(request: Request):
     )
     amb_g, fl_g = ScreenFlashDifferencing.simulate_screen_flash(gen_frame)
     delta_g = pipeline.flash_differencer.compute_difference(amb_g, fl_g)
-    results_gen = pipeline.process_frame(gen_frame, cached_flash_delta=delta_g)
+    results_gen = pipeline.process_frame(gen_frame, cached_flash_delta=delta_g, is_pre_cropped=True)
     serialized_gen = serialize_inspection_results(results_gen, include_images=True)
     serialized_gen["sample_image"] = image_to_base64(gen_frame)
 
@@ -363,7 +365,7 @@ async def compare_synthetic_demo(request: Request):
         )
     amb_s, fl_s = ScreenFlashDifferencing.simulate_screen_flash(sus_frame)
     delta_s = pipeline.flash_differencer.compute_difference(amb_s, fl_s)
-    results_sus = pipeline.process_frame(sus_frame, cached_flash_delta=delta_s)
+    results_sus = pipeline.process_frame(sus_frame, cached_flash_delta=delta_s, is_pre_cropped=True)
     serialized_sus = serialize_inspection_results(results_sus, include_images=True)
     serialized_sus["sample_image"] = image_to_base64(sus_frame)
 
