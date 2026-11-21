@@ -63,6 +63,11 @@ class CurrencyInspectionPipeline:
             default_weights = "models/currency_mobilenet_v3.pth"
             if os.path.exists(default_weights):
                 model_path = default_weights
+            else:
+                repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                root_weights = os.path.join(repo_root, "models", "currency_mobilenet_v3.pth")
+                if os.path.exists(root_weights):
+                    model_path = root_weights
 
         if model_path:
             try:
