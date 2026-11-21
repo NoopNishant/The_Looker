@@ -113,9 +113,9 @@ class BanknoteDetector:
         h, w = bgr_frame.shape[:2]
         frame_ar = w / float(max(1, h))
 
-        # Define default central guided bounding box (50% width, standard ~2.05 aspect ratio)
-        guide_w = int(w * 0.50)
-        guide_h = int(guide_w / 2.05)
+        # Define default central guided bounding box (75% width, standard ~2.15 aspect ratio)
+        guide_w = int(w * 0.75)
+        guide_h = min(int(h * 0.82), int(guide_w / 2.15))
         gx1 = max(0, (w - guide_w) // 2)
         gy1 = max(0, (h - guide_h) // 2)
         gx2 = min(w, gx1 + guide_w)

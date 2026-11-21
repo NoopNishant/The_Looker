@@ -78,7 +78,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnDemoCompare = document.getElementById('btn-demo-compare');
   const btnDemoGenuine = document.getElementById('btn-demo-genuine');
   const btnDemoCounterfeit = document.getElementById('btn-demo-counterfeit');
-  const btnDemoToy = document.getElementById('btn-demo-toy');
   const comparisonSection = document.getElementById('comparison-section');
 
   // Comparison UI Elements
@@ -431,9 +430,9 @@ document.addEventListener('DOMContentLoaded', () => {
       ctx.fillStyle = isCounterfeit ? 'rgba(210, 88, 88, 0.10)' : 'rgba(91, 139, 104, 0.10)';
       ctx.fillRect(x1, y1, x2 - x1, y2 - y1);
     } else {
-      // Default guide box in center (standard banknote proportion)
-      const boxW = Math.min(380, Math.round(w * 0.50));
-      const boxH = Math.round(boxW / 2.05);
+      // Default guide box in center (standard banknote proportion, expanded for effortless live alignment)
+      const boxW = Math.min(w - 24, Math.round(w * 0.75));
+      const boxH = Math.min(h - 24, Math.round(boxW / 2.15));
       x1 = Math.round((w - boxW) / 2);
       y1 = Math.round((h - boxH) / 2);
       x2 = x1 + boxW;
@@ -720,21 +719,11 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  if (btnDemoToy) {
-    btnDemoToy.addEventListener('click', () => {
-      if (benchDenomSelect) benchDenomSelect.value = 'toy_50';
-      if (comparisonSection) comparisonSection.style.display = 'none';
-      triggerSyntheticDemo('toy_50', true, 'toy');
-    });
-  }
-
   if (benchDenomSelect) {
     benchDenomSelect.addEventListener('change', () => {
       const denom = benchDenomSelect.value;
       if (comparisonSection && comparisonSection.style.display !== 'none') {
         triggerComparisonDemo(denom);
-      } else if (denom === 'toy_50') {
-        triggerSyntheticDemo('toy_50', true, 'toy');
       } else {
         triggerSyntheticDemo(denom, false);
       }
@@ -744,8 +733,8 @@ document.addEventListener('DOMContentLoaded', () => {
   async function triggerSyntheticDemo(denom, isCounterfeit, type) {
     document.getElementById('engine-status-text').innerText = 'GENERATING FORENSIC BENCH SAMPLE...';
 
-    const counterfeitType = type || (denom === 'toy_50' ? 'toy' : (isCounterfeit ? 'cmyk' : 'none'));
-    const isCf = isCounterfeit || denom === 'toy_50';
+    const counterfeitType = type || (isCounterfeit ? 'cmyk' : 'none');
+    const isCf = Boolean(isCounterfeit);
 
     try {
       const resp = await fetch('/api/generate-demo', {

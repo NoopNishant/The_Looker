@@ -294,26 +294,13 @@ async def generate_synthetic_demo(request: Request):
     is_counterfeit = bool(data.get("is_counterfeit", False))
     counterfeit_type = str(data.get("counterfeit_type", "cmyk"))
 
-    if denomination == "toy_50" or counterfeit_type == "toy":
-        toy_path = "uploaded_fake_note.jpg"
-        if os.path.exists(toy_path):
-            frame = cv2.imread(toy_path)
-        else:
-            frame = SyntheticCurrencyGenerator.generate_banknote(
-                denomination="50",
-                is_counterfeit=True,
-                width=960,
-                height=480
-            )
-        sample_label = "Toy Banknote (Children Bank of India / Churan Label)"
-    else:
-        frame = SyntheticCurrencyGenerator.generate_banknote(
-            denomination=denomination,
-            is_counterfeit=is_counterfeit,
-            width=960,
-            height=480
-        )
-        sample_label = "Counterfeit (CMYK Rosettes)" if is_counterfeit else "Genuine (Intaglio Fine-Line)"
+    frame = SyntheticCurrencyGenerator.generate_banknote(
+        denomination=denomination,
+        is_counterfeit=is_counterfeit,
+        width=960,
+        height=480
+    )
+    sample_label = "Counterfeit (CMYK Rosettes)" if is_counterfeit else "Genuine (Intaglio Fine-Line)"
 
     amb, fl = ScreenFlashDifferencing.simulate_screen_flash(frame)
     flash_delta = pipeline.flash_differencer.compute_difference(amb, fl)
@@ -337,8 +324,7 @@ async def compare_synthetic_demo(request: Request):
     except Exception:
         pass
 
-    raw_denom = str(data.get("denomination", "500"))
-    denomination = "50" if raw_denom == "toy_50" else raw_denom
+    denomination = str(data.get("denomination", "500"))
 
     # 1. Generate & Inspect Genuine Note
     gen_frame = SyntheticCurrencyGenerator.generate_banknote(
@@ -354,15 +340,12 @@ async def compare_synthetic_demo(request: Request):
     serialized_gen["sample_image"] = image_to_base64(gen_frame)
 
     # 2. Generate & Inspect Counterfeit Note
-    if raw_denom == "toy_50" and os.path.exists("uploaded_fake_note.jpg"):
-        sus_frame = cv2.imread("uploaded_fake_note.jpg")
-    else:
-        sus_frame = SyntheticCurrencyGenerator.generate_banknote(
-            denomination=denomination,
-            is_counterfeit=True,
-            width=960,
-            height=480
-        )
+    sus_frame = SyntheticCurrencyGenerator.generate_banknote(
+        denomination=denomination,
+        is_counterfeit=True,
+        width=960,
+        height=480
+    )
     amb_s, fl_s = ScreenFlashDifferencing.simulate_screen_flash(sus_frame)
     delta_s = pipeline.flash_differencer.compute_difference(amb_s, fl_s)
     results_sus = pipeline.process_frame(sus_frame, cached_flash_delta=delta_s, is_pre_cropped=True)

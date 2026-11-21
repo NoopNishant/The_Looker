@@ -278,7 +278,7 @@ class CurrencyInspectionPipeline:
         elif is_toy_counterfeit:
             verdict = "SUSPECT / COUNTERFEIT"
             is_counterfeit = True
-            authenticity_reason = f"Counterfeit / Toy Banknote Detected ({flagged_marker})"
+            authenticity_reason = f"Counterfeit Marker Detected ({flagged_marker})"
         elif is_halftone:
             verdict = "SUSPECT / COUNTERFEIT"
             is_counterfeit = True
