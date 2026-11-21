@@ -14,12 +14,22 @@ Integrates:
 from typing import Dict, Optional, Tuple, Union
 import os
 import time
+from typing import Dict, List, Optional, Tuple, Union
 import numpy as np
 import cv2
-import torch
-import torchvision.transforms as T
 
-from .model import MultiTaskMobileNetV3, DEFAULT_DENOMINATIONS
+try:
+    import torch
+    import torchvision.transforms as T
+    from .model import MultiTaskMobileNetV3
+    TORCH_AVAILABLE = True
+except ImportError:
+    TORCH_AVAILABLE = False
+    torch = None
+    T = None
+    MultiTaskMobileNetV3 = None
+
+from .model import OpenCVDNNMobileNetV3, DEFAULT_DENOMINATIONS
 from .preprocessing import CLAHEEnhancer, ScreenFlashDifferencing
 from .super_res_halftone import SuperResolutionModule, HalftoneDotDetector
 from .audio_feedback import DiscreetAudioEngine
@@ -31,6 +41,7 @@ from .security_validator import BanknoteSecurityValidator
 class CurrencyInspectionPipeline:
     """
     End-to-end CPU-optimized currency recognition and multi-layer counterfeit detection pipeline.
+    Supports ultra-lightweight OpenCV DNN runtime (<65MB bundle) with seamless PyTorch fallback.
     """
 
     def __init__(
@@ -41,7 +52,7 @@ class CurrencyInspectionPipeline:
         counterfeit_threshold: float = 0.50,
         roi_size: int = 96
     ) -> None:
-        self.device = torch.device(device)
+        self.device = torch.device(device) if (TORCH_AVAILABLE and torch) else "cpu"
         self.counterfeit_threshold = counterfeit_threshold
         self.roi_size = roi_size
 
@@ -51,39 +62,62 @@ class CurrencyInspectionPipeline:
         # 2. Initialize Denomination Deduction Engine
         self.denom_engine = DenominationDeductionEngine()
 
-        # 3. Initialize Neural Network (MobileNetV3-Small)
-        self.model = MultiTaskMobileNetV3(
-            num_denominations=len(DEFAULT_DENOMINATIONS),
-            denominations=DEFAULT_DENOMINATIONS,
-            pretrained=False
-        ).to(self.device)
-        self.model.eval()
+        # 3. Check for ONNX model first (pure OpenCV DNN runtime, zero PyTorch overhead)
+        onnx_candidates = [
+            "models/currency_mobilenet_v3.onnx",
+            os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "models", "currency_mobilenet_v3.onnx")
+        ]
+        onnx_path = next((p for p in onnx_candidates if os.path.exists(p)), None)
 
-        if model_path is None:
-            default_weights = "models/currency_mobilenet_v3.pth"
-            if os.path.exists(default_weights):
-                model_path = default_weights
-            else:
-                repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-                root_weights = os.path.join(repo_root, "models", "currency_mobilenet_v3.pth")
-                if os.path.exists(root_weights):
-                    model_path = root_weights
+        self.dnn_model: Optional[OpenCVDNNMobileNetV3] = None
+        self.use_onnx = False
 
-        if model_path:
+        if onnx_path:
             try:
-                state_dict = torch.load(model_path, map_location=self.device)
-                self.model.load_state_dict(state_dict)
-                print(f"[Pipeline] Successfully loaded trained weights from {model_path}")
+                self.dnn_model = OpenCVDNNMobileNetV3(onnx_path)
+                self.use_onnx = True
+                print(f"[Pipeline] Loaded ONNX model via OpenCV DNN: {onnx_path} (Zero PyTorch overhead)")
             except Exception as e:
-                print(f"[Pipeline] Warning: Could not load model from {model_path}: {e}")
+                print(f"[Pipeline] Warning: Could not load ONNX model via OpenCV DNN: {e}")
 
-        # PyTorch ImageNet preprocessing transform
-        self.tensor_transform = T.Compose([
-            T.ToPILImage(),
-            T.Resize((224, 224)),
-            T.ToTensor(),
-            T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-        ])
+        # Fallback to PyTorch model if ONNX was not loaded and PyTorch is available
+        self.model = None
+        if not self.use_onnx and TORCH_AVAILABLE and MultiTaskMobileNetV3 is not None:
+            try:
+                self.model = MultiTaskMobileNetV3(
+                    num_denominations=len(DEFAULT_DENOMINATIONS),
+                    denominations=DEFAULT_DENOMINATIONS,
+                    pretrained=False
+                ).to(self.device)
+                self.model.eval()
+
+                if model_path is None:
+                    default_weights = "models/currency_mobilenet_v3.pth"
+                    if os.path.exists(default_weights):
+                        model_path = default_weights
+                    else:
+                        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                        root_weights = os.path.join(repo_root, "models", "currency_mobilenet_v3.pth")
+                        if os.path.exists(root_weights):
+                            model_path = root_weights
+
+                if model_path and os.path.exists(model_path):
+                    state_dict = torch.load(model_path, map_location=self.device)
+                    self.model.load_state_dict(state_dict)
+                    print(f"[Pipeline] Successfully loaded PyTorch weights from {model_path}")
+            except Exception as e:
+                print(f"[Pipeline] Warning: Could not load PyTorch model from {model_path}: {e}")
+
+        # Preprocessing transform for PyTorch
+        if TORCH_AVAILABLE and T is not None:
+            self.tensor_transform = T.Compose([
+                T.ToPILImage(),
+                T.Resize((224, 224)),
+                T.ToTensor(),
+                T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+            ])
+        else:
+            self.tensor_transform = None
 
         # 4. Optical Preprocessing Modules
         self.clahe_enhancer = CLAHEEnhancer(clip_limit=2.5, tile_grid_size=(8, 8))
@@ -167,21 +201,26 @@ class CurrencyInspectionPipeline:
         clahe_bgr = self.clahe_enhancer.enhance_bgr(preview_frame)
         topological_grad = self.clahe_enhancer.extract_topological_gradients(preview_frame)
 
-        # Step 3: Multi-Task CNN Inference (MobileNetV3)
-        # Feed natural RGB pixels (consistent with ImageNet normalization & model training)
-        rgb_for_nn = cv2.cvtColor(preview_frame, cv2.COLOR_BGR2RGB)
-        tensor_in = self.tensor_transform(rgb_for_nn).unsqueeze(0).to(self.device)
+        # Step 3: Multi-Task CNN Inference (OpenCV DNN or PyTorch)
+        cnn_probs_dict = None
+        counterfeit_cnn_prob = 0.0
 
-        with torch.inference_mode():
-            nn_output = self.model.forward(tensor_in)
-            denom_logits = nn_output["denomination_logits"][0]
-            counterfeit_cnn_prob = nn_output["counterfeit_prob"][0].item()
-
-            probs = torch.softmax(denom_logits, dim=-1)
-            cnn_probs_dict = {
-                self.model.denominations[i]: probs[i].item()
-                for i in range(min(len(self.model.denominations), probs.shape[0]))
-            }
+        if self.use_onnx and self.dnn_model is not None:
+            nn_out = self.dnn_model.predict(preview_frame)
+            cnn_probs_dict = nn_out["probs"]
+            counterfeit_cnn_prob = nn_out["counterfeit_prob"]
+        elif self.model is not None and TORCH_AVAILABLE and self.tensor_transform is not None:
+            rgb_for_nn = cv2.cvtColor(preview_frame, cv2.COLOR_BGR2RGB)
+            tensor_in = self.tensor_transform(rgb_for_nn).unsqueeze(0).to(self.device)
+            with torch.inference_mode():
+                nn_output = self.model.forward(tensor_in)
+                denom_logits = nn_output["denomination_logits"][0]
+                counterfeit_cnn_prob = nn_output["counterfeit_prob"][0].item()
+                probs = torch.softmax(denom_logits, dim=-1)
+                cnn_probs_dict = {
+                    self.model.denominations[i]: probs[i].item()
+                    for i in range(min(len(self.model.denominations), probs.shape[0]))
+                }
 
         # Step 4: Calibrated Multi-Cue Denomination Deduction
         ar_valid = bool(detection.get("aspect_ratio_valid", detection.get("strategy") == "contour_quad"))
@@ -192,7 +231,7 @@ class CurrencyInspectionPipeline:
         note_name = deduction.get("note_name", denomination)
 
         # Strict Background Gate with Guided Reticle Fallback:
-        bg_prob = cnn_probs_dict.get("Background", 0.0)
+        bg_prob = cnn_probs_dict.get("Background", 0.0) if cnn_probs_dict else 0.0
         if bg_prob >= 0.35:
             # If a false contour was picked up (e.g. clothing), check the central guided reticle
             if detection.get("strategy") == "contour_quad" and "default_crop" in detection:
@@ -204,16 +243,26 @@ class CurrencyInspectionPipeline:
                         r_prev = cv2.resize(reticle_crop, (int(r_w * s_r), 360), interpolation=cv2.INTER_AREA)
                     else:
                         r_prev = reticle_crop
-                    rgb_r = cv2.cvtColor(r_prev, cv2.COLOR_BGR2RGB)
-                    t_r = self.tensor_transform(rgb_r).unsqueeze(0).to(self.device)
-                    with torch.inference_mode():
-                        nn_out_r = self.model.forward(t_r)
-                        probs_r = torch.softmax(nn_out_r["denomination_logits"][0], dim=-1)
-                        cnn_probs_r = {
-                            self.model.denominations[i]: probs_r[i].item()
-                            for i in range(min(len(self.model.denominations), probs_r.shape[0]))
-                        }
-                    if cnn_probs_r.get("Background", 0.0) < 0.35:
+
+                    cnn_probs_r = None
+                    cf_cnn_r = 0.0
+                    if self.use_onnx and self.dnn_model is not None:
+                        nn_out_r = self.dnn_model.predict(r_prev)
+                        cnn_probs_r = nn_out_r["probs"]
+                        cf_cnn_r = nn_out_r["counterfeit_prob"]
+                    elif self.model is not None and TORCH_AVAILABLE and self.tensor_transform is not None:
+                        rgb_r = cv2.cvtColor(r_prev, cv2.COLOR_BGR2RGB)
+                        t_r = self.tensor_transform(rgb_r).unsqueeze(0).to(self.device)
+                        with torch.inference_mode():
+                            nn_out_r = self.model.forward(t_r)
+                            probs_r = torch.softmax(nn_out_r["denomination_logits"][0], dim=-1)
+                            cnn_probs_r = {
+                                self.model.denominations[i]: probs_r[i].item()
+                                for i in range(min(len(self.model.denominations), probs_r.shape[0]))
+                            }
+                            cf_cnn_r = nn_out_r["counterfeit_prob"][0].item()
+
+                    if cnn_probs_r and cnn_probs_r.get("Background", 0.0) < 0.35:
                         note_crop = reticle_crop
                         is_note_detected = True
                         def_bbox = detection.get("default_bbox", (0, 0, w, h))

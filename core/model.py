@@ -8,9 +8,21 @@ Architecture:
 """
 
 from typing import Dict, List, Optional, Tuple, Union
-import torch
-import torch.nn as nn
-import torchvision.models as models
+import numpy as np
+import cv2
+
+try:
+    import torch
+    import torch.nn as nn
+    import torchvision.models as models
+    TORCH_AVAILABLE = True
+except ImportError:
+    TORCH_AVAILABLE = False
+    torch = None
+    models = None
+    class _DummyModule:
+        pass
+    nn = type("nn", (), {"Module": _DummyModule})()
 
 
 DEFAULT_DENOMINATIONS: List[str] = [
@@ -23,6 +35,66 @@ DEFAULT_DENOMINATIONS: List[str] = [
     "500",
     "2000"
 ]
+
+
+class OpenCVDNNMobileNetV3:
+    """
+    Ultra-lightweight OpenCV DNN runtime for MultiTaskMobileNetV3 ONNX model.
+    Runs on pure NumPy + OpenCV with zero PyTorch / CUDA overhead (< 65MB total bundle).
+    """
+
+    def __init__(self, onnx_path: str, denominations: Optional[List[str]] = None) -> None:
+        self.denominations = denominations or DEFAULT_DENOMINATIONS
+        self.net = cv2.dnn.readNetFromONNX(onnx_path)
+        self.out_names = list(self.net.getUnconnectedOutLayersNames())
+
+    def predict(self, bgr_img: np.ndarray) -> Dict[str, Union[Dict[str, float], float]]:
+        """
+        Run inference on a single BGR image.
+        Returns:
+            - 'probs': dictionary mapping denomination to softmax probability
+            - 'counterfeit_prob': float in [0, 1]
+        """
+        rgb = cv2.cvtColor(bgr_img, cv2.COLOR_BGR2RGB)
+        resized = cv2.resize(rgb, (224, 224), interpolation=cv2.INTER_AREA)
+        blob = cv2.dnn.blobFromImage(
+            resized.astype(np.float32) / 255.0,
+            scalefactor=1.0,
+            size=(224, 224),
+            mean=(0.485, 0.456, 0.406),
+            swapRB=False,
+            crop=False
+        )
+        blob[:, 0, :, :] /= 0.229
+        blob[:, 1, :, :] /= 0.224
+        blob[:, 2, :, :] /= 0.225
+
+        self.net.setInput(blob)
+        outs = self.net.forward(self.out_names)
+        out_map = {name: val for name, val in zip(self.out_names, outs)}
+
+        # Denomination logits
+        logits = out_map["denomination_logits"][0]
+        e_x = np.exp(logits - np.max(logits))
+        probs_arr = e_x / max(1e-7, float(np.sum(e_x)))
+        probs_dict = {
+            self.denominations[i]: float(probs_arr[i])
+            for i in range(min(len(self.denominations), len(probs_arr)))
+        }
+
+        # Counterfeit probability
+        if "counterfeit_prob" in out_map:
+            cf_prob = float(out_map["counterfeit_prob"][0][0])
+        elif "counterfeit_logits" in out_map:
+            logit_cf = float(out_map["counterfeit_logits"][0][0])
+            cf_prob = float(1.0 / (1.0 + np.exp(-logit_cf)))
+        else:
+            cf_prob = 0.0
+
+        return {
+            "probs": probs_dict,
+            "counterfeit_prob": cf_prob
+        }
 
 
 class MultiTaskMobileNetV3(nn.Module):

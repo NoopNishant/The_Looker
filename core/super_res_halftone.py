@@ -11,8 +11,17 @@ Features:
 from typing import Dict, Optional, Tuple, Union
 import numpy as np
 import cv2
-import torch
-import torch.nn as nn
+
+try:
+    import torch
+    import torch.nn as nn
+    TORCH_AVAILABLE = True
+except ImportError:
+    TORCH_AVAILABLE = False
+    torch = None
+    class _DummyModule:
+        pass
+    nn = type("nn", (), {"Module": _DummyModule})()
 
 
 class ESPCNSubPixelNet(nn.Module):
@@ -54,21 +63,26 @@ class ESPCNSubPixelNet(nn.Module):
 
 class SuperResolutionModule:
     """
-    Super-Resolution processing pipeline combining ESPCN neural upscaling
+    Super-Resolution processing pipeline combining neural / Lanczos-4 upscaling
     with unsharp masking for micro-texture detail preservation.
     """
 
     def __init__(self, scale_factor: int = 2, device: str = "cpu") -> None:
         self.scale_factor = scale_factor
-        self.device = torch.device(device)
-        self.model = ESPCNSubPixelNet(scale_factor=scale_factor, in_channels=1).to(self.device)
-        self.model.eval()
+        if TORCH_AVAILABLE:
+            try:
+                self.device = torch.device(device)
+                self.model = ESPCNSubPixelNet(scale_factor=scale_factor, in_channels=1).to(self.device)
+                self.model.eval()
+            except Exception:
+                self.model = None
+        else:
+            self.model = None
 
-    @torch.inference_mode()
     def upscale_roi(self, bgr_roi: np.ndarray) -> np.ndarray:
         """
-        Upscale a Region-of-Interest (ROI) using ESPCN on the Y (luminance) channel,
-        interpolating chromatic channels to maintain sub-pixel micro-texture acuity.
+        Upscale a Region-of-Interest (ROI) using ESPCN on luminance channel (or high-acuity
+        Lanczos-4 interpolation with unsharp masking in serverless mode), maintaining sub-pixel acuity.
         """
         if bgr_roi is None or bgr_roi.size == 0:
             raise ValueError("ROI image is empty")
@@ -76,35 +90,43 @@ class SuperResolutionModule:
         h, w = bgr_roi.shape[:2]
         target_h, target_w = h * self.scale_factor, w * self.scale_factor
 
-        # Convert to YCrCb (ITU-R BT.601)
-        ycrcb = cv2.cvtColor(bgr_roi, cv2.COLOR_BGR2YCrCb)
-        y_channel, cr, cb = cv2.split(ycrcb)
+        if not TORCH_AVAILABLE or self.model is None:
+            # High-acuity Lanczos4 interpolation with micro-relief unsharp mask (zero PyTorch overhead)
+            upscaled = cv2.resize(bgr_roi, (target_w, target_h), interpolation=cv2.INTER_LANCZOS4)
+            blurred = cv2.GaussianBlur(upscaled, (0, 0), 1.0)
+            sharpened = cv2.addWeighted(upscaled, 1.35, blurred, -0.35, 0)
+            return np.clip(sharpened, 0, 255).astype(np.uint8)
 
-        # Normalize Y to [0, 1] tensor
-        y_norm = y_channel.astype(np.float32) / 255.0
-        y_tensor = torch.from_numpy(y_norm).unsqueeze(0).unsqueeze(0).to(self.device)
+        with torch.inference_mode():
+            # Convert to YCrCb (ITU-R BT.601)
+            ycrcb = cv2.cvtColor(bgr_roi, cv2.COLOR_BGR2YCrCb)
+            y_channel, cr, cb = cv2.split(ycrcb)
 
-        # Super-resolve Y channel
-        y_sr_tensor = self.model(y_tensor)
-        y_sr_tensor = torch.clamp(y_sr_tensor, 0.0, 1.0)
-        y_sr = (y_sr_tensor.squeeze().cpu().numpy() * 255.0).astype(np.uint8)
+            # Normalize Y to [0, 1] tensor
+            y_norm = y_channel.astype(np.float32) / 255.0
+            y_tensor = torch.from_numpy(y_norm).unsqueeze(0).unsqueeze(0).to(self.device)
 
-        # Ensure exact dimensional match
-        if y_sr.shape != (target_h, target_w):
-            y_sr = cv2.resize(y_sr, (target_w, target_h), interpolation=cv2.INTER_CUBIC)
+            # Super-resolve Y channel
+            y_sr_tensor = self.model(y_tensor)
+            y_sr_tensor = torch.clamp(y_sr_tensor, 0.0, 1.0)
+            y_sr = (y_sr_tensor.squeeze().cpu().numpy() * 255.0).astype(np.uint8)
 
-        # Upscale chrominance channels with bicubic interpolation
-        cr_sr = cv2.resize(cr, (target_w, target_h), interpolation=cv2.INTER_CUBIC)
-        cb_sr = cv2.resize(cb, (target_w, target_h), interpolation=cv2.INTER_CUBIC)
+            # Ensure exact dimensional match
+            if y_sr.shape != (target_h, target_w):
+                y_sr = cv2.resize(y_sr, (target_w, target_h), interpolation=cv2.INTER_CUBIC)
 
-        # Merge and transform back to BGR
-        ycrcb_sr = cv2.merge((y_sr, cr_sr, cb_sr))
-        bgr_sr = cv2.cvtColor(ycrcb_sr, cv2.COLOR_YCrCb2BGR)
+            # Upscale chrominance channels with bicubic interpolation
+            cr_sr = cv2.resize(cr, (target_w, target_h), interpolation=cv2.INTER_CUBIC)
+            cb_sr = cv2.resize(cb, (target_w, target_h), interpolation=cv2.INTER_CUBIC)
 
-        # Subtle unsharp masking to enhance micro-relief edges
-        blurred = cv2.GaussianBlur(bgr_sr, (0, 0), 1.0)
-        sharpened = cv2.addWeighted(bgr_sr, 1.35, blurred, -0.35, 0)
-        return np.clip(sharpened, 0, 255).astype(np.uint8)
+            # Merge and transform back to BGR
+            ycrcb_sr = cv2.merge((y_sr, cr_sr, cb_sr))
+            bgr_sr = cv2.cvtColor(ycrcb_sr, cv2.COLOR_YCrCb2BGR)
+
+            # Subtle unsharp masking to enhance micro-relief edges
+            blurred = cv2.GaussianBlur(bgr_sr, (0, 0), 1.0)
+            sharpened = cv2.addWeighted(bgr_sr, 1.35, blurred, -0.35, 0)
+            return np.clip(sharpened, 0, 255).astype(np.uint8)
 
 
 class HalftoneDotDetector:
