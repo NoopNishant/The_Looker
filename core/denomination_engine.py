@@ -21,14 +21,14 @@ class DenominationDeductionEngine:
     PROFILES = {
         "10": {
             "name": "₹10 (Chocolate Brown)",
-            "chroma": np.array([0.46, 0.32, 0.23]),
+            "chroma": np.array([0.45, 0.32, 0.23]),
             "hue_center": 11.0,
             "target_aspect": 1.95
         },
         "20": {
             "name": "₹20 (Greenish Yellow)",
             "chroma": np.array([0.41, 0.39, 0.20]),
-            "hue_center": 26.0,
+            "hue_center": 28.0,
             "target_aspect": 2.03
         },
         "50": {
@@ -44,10 +44,10 @@ class DenominationDeductionEngine:
             "target_aspect": 2.15
         },
         "200": {
-            "name": "₹200 (Bright Orange)",
-            "chroma": np.array([0.48, 0.34, 0.18]),
-            "hue_center": 17.0,
-            "target_aspect": 2.20
+            "name": "₹200 (Bright Yellow-Orange)",
+            "chroma": np.array([0.56, 0.34, 0.10]),
+            "hue_center": 22.0,
+            "target_aspect": 2.21
         },
         "500": {
             "name": "₹500 (Stone Gray)",
@@ -67,10 +67,12 @@ class DenominationDeductionEngine:
     def deduce_denomination(
         cls,
         cropped_note: np.ndarray,
-        cnn_probs: Optional[Dict[str, float]] = None
+        cnn_probs: Optional[Dict[str, float]] = None,
+        aspect_ratio_valid: bool = True
     ) -> Dict[str, Union[str, float, bool, Dict]]:
         """
-        Deduce banknote denomination using normalized chromaticity and spectral centroids.
+        Deduce banknote denomination using normalized chromaticity, spectral centroids,
+        saturation, value, and dimensional aspect ratio metrics.
         """
         if cropped_note is None or cropped_note.size == 0:
             return {
@@ -111,10 +113,11 @@ class DenominationDeductionEngine:
             float(np.median(b_norm))
         ])
 
-        # HSV for hue and saturation guidance
+        # HSV for hue, saturation, and luminance guidance
         hsv = cv2.cvtColor(central_bgr, cv2.COLOR_BGR2HSV)
         median_hue = float(np.median(hsv[:, :, 0]))
         mean_sat = float(np.mean(hsv[:, :, 1]))
+        mean_val = float(np.mean(hsv[:, :, 2]))
 
         # Balanced multi-cue likeness evaluation across all denominations
         scores: Dict[str, float] = {}
@@ -126,23 +129,47 @@ class DenominationDeductionEngine:
 
             # 1. Normalized chromaticity distance (Euclidean in r-g-b space)
             dist_chroma = float(np.linalg.norm(mean_chroma - target_chroma))
-            score_chroma = np.exp(-12.0 * (dist_chroma ** 2))
+            score_chroma = np.exp(-18.0 * (dist_chroma ** 2))
 
             # 2. Angular hue distance (symmetric Gaussian Likelihood)
             hue_diff = min(abs(median_hue - target_hue), 180.0 - abs(median_hue - target_hue))
-            score_hue = np.exp(-0.5 * ((hue_diff / 24.0) ** 2))
+            score_hue = np.exp(-0.5 * ((hue_diff / 16.0) ** 2))
 
-            # 3. Dimensional aspect ratio
-            ar_diff = abs(aspect_ratio - target_ar)
-            score_ar = max(0.40, np.exp(-0.5 * ((ar_diff / 0.5) ** 2)))
+            # 3. Dimensional aspect ratio (only applied when tight bounding quad is verified)
+            if aspect_ratio_valid:
+                ar_diff = abs(aspect_ratio - target_ar)
+                score_ar = max(0.35, np.exp(-0.5 * ((ar_diff / 0.28) ** 2)))
+            else:
+                score_ar = 1.0
 
-            # Combined optical likeness (balanced equally across all denominations)
-            optical_like = 0.50 * score_chroma + 0.35 * score_hue + 0.15 * score_ar
+            # Combined optical likeness
+            optical_like = 0.55 * score_chroma + 0.35 * score_hue + 0.10 * score_ar
+
+            # Distinctive optical discrimination between ₹10 (Chocolate Brown) and ₹200 (Bright Yellow-Orange)
+            if denom == "200":
+                if mean_chroma[2] >= 0.17:  # High blue indicates chocolate brown or other, not bright yellow-orange
+                    optical_like *= 0.35
+                if mean_sat < 110:         # ₹200 has high vibrant saturation
+                    optical_like *= 0.40
+                if mean_val < 150:         # ₹200 has high luminance
+                    optical_like *= 0.60
+                if mean_chroma[0] >= 0.52 and mean_chroma[2] <= 0.13 and mean_sat >= 130:
+                    optical_like = min(1.0, optical_like * 1.35)
+
+            elif denom == "10":
+                if mean_chroma[2] <= 0.13 and mean_chroma[0] >= 0.50:  # Low blue + high red indicates bright orange
+                    optical_like *= 0.35
+                if mean_sat > 135:         # ₹10 has muted earthy brown saturation
+                    optical_like *= 0.45
+                if mean_val > 185:         # ₹10 is dark brown, not neon bright
+                    optical_like *= 0.65
+                if mean_chroma[2] >= 0.18 and mean_sat <= 110:
+                    optical_like = min(1.0, optical_like * 1.30)
 
             # Multi-cue fusion with CNN semantic probability
             if cnn_probs:
                 cnn_score = float(cnn_probs.get(denom, 0.0))
-                final_score = 0.75 * cnn_score + 0.25 * optical_like
+                final_score = 0.65 * cnn_score + 0.35 * optical_like
             else:
                 final_score = optical_like
 

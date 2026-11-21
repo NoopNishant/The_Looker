@@ -179,7 +179,8 @@ class CurrencyInspectionPipeline:
             }
 
         # Step 4: Calibrated Multi-Cue Denomination Deduction
-        deduction = self.denom_engine.deduce_denomination(note_crop, cnn_probs=cnn_probs_dict)
+        ar_valid = bool(detection.get("aspect_ratio_valid", detection.get("strategy") == "contour_quad"))
+        deduction = self.denom_engine.deduce_denomination(note_crop, cnn_probs=cnn_probs_dict, aspect_ratio_valid=ar_valid)
         denomination = deduction["denomination"]
         confidence = deduction["confidence"]
         is_currency = deduction["is_valid_currency"]
@@ -220,7 +221,7 @@ class CurrencyInspectionPipeline:
                         ]
                         cnn_probs_dict = cnn_probs_r
                         counterfeit_cnn_prob = nn_out_r["counterfeit_prob"][0].item()
-                        deduction = self.denom_engine.deduce_denomination(note_crop, cnn_probs=cnn_probs_dict)
+                        deduction = self.denom_engine.deduce_denomination(note_crop, cnn_probs=cnn_probs_dict, aspect_ratio_valid=False)
                         denomination = deduction["denomination"]
                         confidence = deduction["confidence"]
                         is_currency = deduction["is_valid_currency"]

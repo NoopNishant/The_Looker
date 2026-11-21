@@ -145,32 +145,9 @@ class BanknoteDetector:
                 "confidence": 0.98,
                 "strategy": "full_banknote_frame",
                 "default_crop": default_crop,
-                "default_bbox": default_bbox
+                "default_bbox": default_bbox,
+                "aspect_ratio_valid": True
             }
-
-        # Step 0: Check if input image is ALREADY a pre-cropped banknote
-        # Uploaded banknote photos strictly range from 1.50 to 2.85 (or portrait 0.35 to 0.67)
-        long_ar = max(frame_ar, 1.0 / max(1e-4, frame_ar))
-        if 1.50 <= long_ar <= 2.85 and face_area_ratio < 0.35:
-            full_edge_dens = self.compute_edge_density(gray)
-            full_tex = self.compute_texture_energy(gray)
-            full_skin = self.compute_skin_ratio(small)
-            # Accept if high print/edge density and not pure smooth skin
-            # For 16:9 standard webcam scene (AR ~1.78), only accept full frame if not a human scene
-            is_webcam_scene = (1.70 <= frame_ar <= 1.85) and (len(detected_faces) > 0 or full_skin > 0.35)
-            if not is_webcam_scene:
-                if (full_edge_dens > 0.020 or full_tex > 30.0) and not (full_skin > 0.85 and full_edge_dens < 0.025):
-                    self.smooth_bbox = (0.0, 0.0, float(w), float(h))
-                    return {
-                        "detected": True,
-                        "bbox": (0, 0, w, h),
-                        "corners": [[0, 0], [w, 0], [w, h], [0, h]],
-                        "cropped_note": bgr_frame,
-                        "confidence": 0.98,
-                        "strategy": "full_banknote_frame",
-                        "default_crop": default_crop,
-                        "default_bbox": default_bbox
-                    }
 
         # Step 1: Multi-candidate contour polygon analysis
         blurred = cv2.GaussianBlur(gray, (5, 5), 0)
@@ -337,7 +314,8 @@ class BanknoteDetector:
                 "confidence": float(np.clip(best_score * 1.1, 0.60, 0.98)),
                 "strategy": "contour_quad",
                 "default_crop": default_crop,
-                "default_bbox": default_bbox
+                "default_bbox": default_bbox,
+                "aspect_ratio_valid": True
             }
 
         # Step 2: Guided Central Reticle Presence
@@ -378,7 +356,8 @@ class BanknoteDetector:
                     "confidence": 0.88,
                     "strategy": "guided_reticle",
                     "default_crop": default_crop,
-                    "default_bbox": default_bbox
+                    "default_bbox": default_bbox,
+                    "aspect_ratio_valid": False
                 }
 
         # Step 3: Standby (empty frame, user face, or smooth clothes)
@@ -394,5 +373,6 @@ class BanknoteDetector:
             "confidence": 0.0,
             "strategy": "standby",
             "default_crop": default_crop,
-            "default_bbox": default_bbox
+            "default_bbox": default_bbox,
+            "aspect_ratio_valid": False
         }
