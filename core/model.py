@@ -16,13 +16,28 @@ try:
     import torch.nn as nn
     import torchvision.models as models
     TORCH_AVAILABLE = True
-except ImportError:
+except (ImportError, AttributeError):
     TORCH_AVAILABLE = False
-    torch = None
-    models = None
+    class _DummyTorch:
+        Tensor = object
+        @staticmethod
+        def inference_mode(*args, **kwargs):
+            def decorator(func):
+                return func
+            return decorator
+        @staticmethod
+        def device(*args, **kwargs):
+            return "cpu"
+    torch = _DummyTorch()
     class _DummyModule:
-        pass
-    nn = type("nn", (), {"Module": _DummyModule})()
+        def __init__(self, *args, **kwargs):
+            pass
+    class _DummyNN:
+        Module = _DummyModule
+        def __getattr__(self, name):
+            return _DummyModule
+    nn = _DummyNN()
+    models = None
 
 
 DEFAULT_DENOMINATIONS: List[str] = [

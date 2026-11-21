@@ -48,14 +48,28 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
 
-os.makedirs(STATIC_DIR, exist_ok=True)
-os.makedirs(TEMPLATES_DIR, exist_ok=True)
+# Resolve static directory across local and serverless layouts
+static_candidates = [
+    STATIC_DIR,
+    os.path.join(os.path.dirname(BASE_DIR), "web", "static"),
+    os.path.abspath("web/static")
+]
+active_static_dir = next((p for p in static_candidates if os.path.exists(p)), None)
 
-# Mount static directory
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+# Mount static directory if present (avoids read-only /var/task crash on Vercel)
+if active_static_dir:
+    app.mount("/static", StaticFiles(directory=active_static_dir), name="static")
 
-# Initialize global pipeline engine
-pipeline = CurrencyInspectionPipeline(device="cpu", enable_audio=False)
+# Lazy-loaded global pipeline engine (prevents serverless cold-start timeouts)
+_pipeline_instance: Optional[CurrencyInspectionPipeline] = None
+
+
+def get_pipeline() -> CurrencyInspectionPipeline:
+    """Lazy initialize forensic pipeline on first inspection request."""
+    global _pipeline_instance
+    if _pipeline_instance is None:
+        _pipeline_instance = CurrencyInspectionPipeline(device="cpu", enable_audio=False)
+    return _pipeline_instance
 
 
 def image_to_base64(img: np.ndarray, format: str = ".jpg", quality: int = 85) -> str:
@@ -158,15 +172,25 @@ def serialize_inspection_results(
     return payload
 
 
+@app.get("/api/health")
+def health_check():
+    """Lightweight health check endpoint for cloud/serverless monitoring."""
+    return {"status": "healthy", "service": "The Looker Forensic Studio", "version": "2.2.0"}
+
+
 @app.get("/", response_class=HTMLResponse)
 def serve_index():
-    """Serve the primary HTML application."""
-    index_file = os.path.join(TEMPLATES_DIR, "index.html")
-    if not os.path.exists(index_file):
-        return HTMLResponse("<h3>Index page not found</h3>", status_code=404)
-    with open(index_file, "r", encoding="utf-8") as f:
-        content = f.read()
-    return HTMLResponse(content=content)
+    """Serve the primary HTML application with multi-candidate path search."""
+    index_candidates = [
+        os.path.join(TEMPLATES_DIR, "index.html"),
+        os.path.join(os.path.dirname(BASE_DIR), "web", "templates", "index.html"),
+        os.path.abspath("web/templates/index.html")
+    ]
+    for p in index_candidates:
+        if os.path.exists(p):
+            with open(p, "r", encoding="utf-8") as f:
+                return HTMLResponse(content=f.read())
+    return HTMLResponse("<h3>Forensic Studio: index.html not found</h3>", status_code=404)
 
 
 @app.post("/api/inspect/image")
@@ -195,12 +219,13 @@ async def inspect_uploaded_image(request: Request):
         return JSONResponse({"error": "Invalid or unreadable image data"}, status_code=400)
 
     # Simulate screen flash differencing for static image so watermark plates populate
+    pipe = get_pipeline()
     amb, fl = ScreenFlashDifferencing.simulate_screen_flash(frame)
-    flash_delta = pipeline.flash_differencer.compute_difference(amb, fl)
+    flash_delta = pipe.flash_differencer.compute_difference(amb, fl)
 
-    det_check = pipeline.detector.detect(frame)
+    det_check = pipe.detector.detect(frame)
     is_pre = det_check.get("strategy") in ["full_banknote_frame", "standby", "guided_reticle"]
-    results = pipeline.process_frame(frame, cached_flash_delta=flash_delta, is_pre_cropped=is_pre)
+    results = pipe.process_frame(frame, cached_flash_delta=flash_delta, is_pre_cropped=is_pre)
     serialized = serialize_inspection_results(results, include_images=True)
     serialized["filename"] = filename
     serialized["resolution"] = f"{frame.shape[1]}x{frame.shape[0]}"
@@ -235,13 +260,14 @@ async def inspect_uploaded_video(request: Request):
         scores = []
         denoms = {}
 
+        pipe = get_pipeline()
         for idx in indices:
             cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
             ret, frame = cap.read()
             if not ret or frame is None:
                 continue
 
-            res = pipeline.process_frame(frame)
+            res = pipe.process_frame(frame)
             score = float(res["composite_counterfeit_score"])
             scores.append(score)
 
@@ -263,7 +289,7 @@ async def inspect_uploaded_video(request: Request):
 
         avg_score = float(np.mean(scores)) if scores else 0.0
         primary_denom = max(denoms, key=denoms.get) if denoms else "Undetermined"
-        overall_counterfeit = avg_score >= pipeline.counterfeit_threshold
+        overall_counterfeit = avg_score >= pipe.counterfeit_threshold
 
         return JSONResponse({
             "filename": filename,
@@ -302,10 +328,11 @@ async def generate_synthetic_demo(request: Request):
     )
     sample_label = "Counterfeit (CMYK Rosettes)" if is_counterfeit else "Genuine (Intaglio Fine-Line)"
 
+    pipe = get_pipeline()
     amb, fl = ScreenFlashDifferencing.simulate_screen_flash(frame)
-    flash_delta = pipeline.flash_differencer.compute_difference(amb, fl)
+    flash_delta = pipe.flash_differencer.compute_difference(amb, fl)
 
-    results = pipeline.process_frame(frame, cached_flash_delta=flash_delta, is_pre_cropped=True)
+    results = pipe.process_frame(frame, cached_flash_delta=flash_delta, is_pre_cropped=True)
     serialized = serialize_inspection_results(results, include_images=True)
     serialized["sample_image"] = image_to_base64(frame)
     serialized["sample_type"] = sample_label
@@ -325,6 +352,7 @@ async def compare_synthetic_demo(request: Request):
         pass
 
     denomination = str(data.get("denomination", "500"))
+    pipe = get_pipeline()
 
     # 1. Generate & Inspect Genuine Note
     gen_frame = SyntheticCurrencyGenerator.generate_banknote(
@@ -334,8 +362,8 @@ async def compare_synthetic_demo(request: Request):
         height=480
     )
     amb_g, fl_g = ScreenFlashDifferencing.simulate_screen_flash(gen_frame)
-    delta_g = pipeline.flash_differencer.compute_difference(amb_g, fl_g)
-    results_gen = pipeline.process_frame(gen_frame, cached_flash_delta=delta_g, is_pre_cropped=True)
+    delta_g = pipe.flash_differencer.compute_difference(amb_g, fl_g)
+    results_gen = pipe.process_frame(gen_frame, cached_flash_delta=delta_g, is_pre_cropped=True)
     serialized_gen = serialize_inspection_results(results_gen, include_images=True)
     serialized_gen["sample_image"] = image_to_base64(gen_frame)
 
@@ -347,8 +375,8 @@ async def compare_synthetic_demo(request: Request):
         height=480
     )
     amb_s, fl_s = ScreenFlashDifferencing.simulate_screen_flash(sus_frame)
-    delta_s = pipeline.flash_differencer.compute_difference(amb_s, fl_s)
-    results_sus = pipeline.process_frame(sus_frame, cached_flash_delta=delta_s, is_pre_cropped=True)
+    delta_s = pipe.flash_differencer.compute_difference(amb_s, fl_s)
+    results_sus = pipe.process_frame(sus_frame, cached_flash_delta=delta_s, is_pre_cropped=True)
     serialized_sus = serialize_inspection_results(results_sus, include_images=True)
     serialized_sus["sample_image"] = image_to_base64(sus_frame)
 
@@ -369,7 +397,8 @@ async def compute_screen_flash_difference(request: Request):
     if ambient is None or flash is None:
         return JSONResponse({"error": "Failed to decode frame pair"}, status_code=400)
 
-    diff_results = pipeline.flash_differencer.compute_difference(ambient, flash)
+    pipe = get_pipeline()
+    diff_results = pipe.flash_differencer.compute_difference(ambient, flash)
     return JSONResponse({
         "transmission_density": round(float(diff_results["transmission_density"]), 4),
         "watermark_mask": image_to_base64(diff_results["watermark_mask"]),
@@ -394,7 +423,8 @@ async def live_frame_feed(request: Request):
     if frame is None or frame.size == 0:
         return JSONResponse({"error": "Invalid frame"}, status_code=400)
 
-    results = pipeline.process_frame(frame)
+    pipe = get_pipeline()
+    results = pipe.process_frame(frame)
     telemetry = serialize_inspection_results(results, include_images=False)
     return JSONResponse(telemetry)
 
@@ -418,7 +448,8 @@ async def websocket_live_feed(websocket: WebSocket):
                 await websocket.send_json({"error": "Invalid frame"})
                 continue
 
-            results = pipeline.process_frame(frame)
+            pipe = get_pipeline()
+            results = pipe.process_frame(frame)
             telemetry = serialize_inspection_results(results, include_images=False)
             await websocket.send_json(telemetry)
 
