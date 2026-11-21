@@ -43,6 +43,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def exception_logging_middleware(request: Request, call_next):
+    try:
+        return await call_next(request)
+    except Exception as exc:
+        import traceback
+        tb = traceback.format_exc()
+        print(f"[Unhandled Server Error] {tb}", flush=True)
+        return HTMLResponse(
+            f"<html><body style='background:#0f172a;color:#f87171;padding:32px;font-family:monospace;'>"
+            f"<h2 style='color:#ef4444;'>The Looker Server Error:</h2>"
+            f"<pre style='background:#1e293b;padding:20px;border-radius:8px;color:#fca5a5;overflow:auto;white-space:pre-wrap;'>{tb}</pre>"
+            f"</body></html>",
+            status_code=500
+        )
+
 # Base directories
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
@@ -179,6 +196,8 @@ def health_check():
 
 
 @app.get("/", response_class=HTMLResponse)
+@app.get("/api", response_class=HTMLResponse)
+@app.get("/api/index.py", response_class=HTMLResponse)
 def serve_index():
     """Serve the primary HTML application with multi-candidate path search."""
     index_candidates = [

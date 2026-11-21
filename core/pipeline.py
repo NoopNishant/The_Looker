@@ -274,7 +274,7 @@ class CurrencyInspectionPipeline:
                             [def_bbox[0], def_bbox[1] + def_bbox[3]]
                         ]
                         cnn_probs_dict = cnn_probs_r
-                        counterfeit_cnn_prob = nn_out_r["counterfeit_prob"][0].item()
+                        counterfeit_cnn_prob = float(cf_cnn_r) if isinstance(cf_cnn_r, (int, float)) else cf_cnn_r[0].item()
                         deduction = self.denom_engine.deduce_denomination(note_crop, cnn_probs=cnn_probs_dict, aspect_ratio_valid=False)
                         denomination = deduction["denomination"]
                         confidence = deduction["confidence"]
