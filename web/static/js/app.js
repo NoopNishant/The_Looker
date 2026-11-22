@@ -183,6 +183,8 @@ document.addEventListener('DOMContentLoaded', () => {
       if (comparisonSection) {
         comparisonSection.style.display = 'block';
       }
+      btnUploadTrigger.style.display = 'inline-flex';
+      btnUploadTrigger.innerText = 'Upload Note to Compare';
       if (lastUploadedImageBase64) {
         triggerComparisonDemo(null, lastUploadedImageBase64);
       } else {
@@ -585,11 +587,13 @@ document.addEventListener('DOMContentLoaded', () => {
   btnUploadTrigger.addEventListener('click', () => {
     if (currentMode === 'photo') filePhotoInput.click();
     else if (currentMode === 'video') fileVideoInput.click();
+    else if (currentMode === 'compare') fileCompareInput.click();
   });
 
   dropzoneBox.addEventListener('click', () => {
     if (currentMode === 'photo') filePhotoInput.click();
     else if (currentMode === 'video') fileVideoInput.click();
+    else if (currentMode === 'compare') fileCompareInput.click();
   });
 
   filePhotoInput.addEventListener('change', (e) => {
@@ -715,6 +719,22 @@ document.addEventListener('DOMContentLoaded', () => {
     btnDemoCompare.addEventListener('click', () => {
       const denom = benchDenomSelect ? benchDenomSelect.value : '500';
       triggerComparisonDemo(denom, null);
+    });
+  }
+
+  const btnCompareUploadHeader = document.getElementById('btn-compare-upload-header');
+  if (btnCompareUploadHeader && fileCompareInput) {
+    btnCompareUploadHeader.addEventListener('click', () => {
+      fileCompareInput.click();
+    });
+  }
+
+  const screenContainer = document.getElementById('screen-container');
+  if (screenContainer && fileCompareInput) {
+    screenContainer.addEventListener('click', (e) => {
+      if (currentMode === 'compare') {
+        fileCompareInput.click();
+      }
     });
   }
 
@@ -927,8 +947,15 @@ document.addEventListener('DOMContentLoaded', () => {
             ctx.lineWidth = 2;
             ctx.beginPath();
             ctx.moveTo(halfW, 12);
-            ctx.lineTo(halfW, canvasEl.height - 12);
+            ctx.lineTo(halfW, canvasEl.height - 24);
             ctx.stroke();
+
+            // Bottom interactive upload guidance
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
+            ctx.font = '500 11px ui-monospace, monospace';
+            ctx.textAlign = 'center';
+            ctx.fillText('CLICK VIEWPORT OR USE "UPLOAD NOTE TO COMPARE" TO TEST YOUR OWN BANKNOTE', halfW, canvasEl.height - 8);
+            ctx.textAlign = 'left';
           }
         };
         imgLeft.onload = renderDualNotes;

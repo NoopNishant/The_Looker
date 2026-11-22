@@ -71,13 +71,13 @@ class BanknoteSecurityValidator:
         # Calibrated thresholds to ensure zero false positives on genuine RBI notes
         # while reliably triggering on commercial toy/play/manoranjan currency
         marker_thresholds = {
-            "children_bank_header": 0.62,
-            "children_word": 0.72,
-            "hindi_children_bank": 0.72,
-            "manoranjan_bank": 0.86,
-            "full_of_fun_top": 0.72,
-            "full_of_fun_bot": 0.72,
-            "churan_label_strip": 0.92
+            "manoranjan_bank": 0.85,
+            "children_bank_header": 0.68,
+            "hindi_children_bank": 0.75,
+            "children_word": 0.75,
+            "full_of_fun_top": 0.75,
+            "full_of_fun_bot": 0.75,
+            "churan_label_strip": 0.85
         }
 
         header_templates = {
@@ -96,14 +96,15 @@ class BanknoteSecurityValidator:
             search_region = gray[:int(nh * 0.55), :] if name in header_templates else gray
             s_h, s_w = search_region.shape[:2]
 
-            # Multi-scale check across expected banknote sizes & low-res mobile captures
+            # Multi-scale check across expected banknote sizes
             base_s = nw / 360.0
-            candidate_scales = [base_s * s for s in [0.35, 0.50, 0.65, 0.80, 1.0, 1.20, 1.40]]
-            candidate_scales += [s_w / (tw * 2.5), s_w / (tw * 3.5), s_w / (tw * 5.0)]
+            candidate_scales = [base_s * s for s in [0.75, 0.90, 1.05, 1.20, 1.35]]
 
             for cur_s in set(candidate_scales):
                 sw, sh = int(tw * cur_s), int(th * cur_s)
-                if sw >= s_w or sh >= s_h or sw < 10 or sh < 6:
+                # Ensure template does not shrink below legible text resolution
+                # (prevents tiny blurry strips from false matching real RBI typography)
+                if sw >= s_w or sh >= s_h or sw < 20 or sh < 12:
                     continue
                 scaled_t = cv2.resize(templ, (sw, sh), interpolation=cv2.INTER_AREA)
                 res = cv2.matchTemplate(search_region, scaled_t, cv2.TM_CCOEFF_NORMED)
@@ -112,7 +113,7 @@ class BanknoteSecurityValidator:
                     best_v = float(max_v)
 
             scores[name] = round(best_v, 3)
-            thresh = marker_thresholds.get(name, 0.72)
+            thresh = marker_thresholds.get(name, 0.75)
 
             if best_v >= thresh:
                 flagged.append(name)
