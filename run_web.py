@@ -67,7 +67,8 @@ def prewarm_pipeline() -> None:
     print("[1/3] Pre-warming Neural Networks & Forensic Pipeline...", flush=True)
     t0 = time.time()
     try:
-        from web.app import pipeline
+        from web.app import get_pipeline
+        pipeline = get_pipeline()
         from synthetic_data import SyntheticCurrencyGenerator
         dummy = SyntheticCurrencyGenerator.generate_banknote("500", is_counterfeit=False, width=480, height=270)
         pipeline.process_frame(dummy)
