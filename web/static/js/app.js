@@ -168,6 +168,7 @@ document.addEventListener('DOMContentLoaded', () => {
       triggerSyntheticDemo(initialDenom, false);
     } else if (mode === 'compare') {
       document.getElementById('viewport-heading').innerText = 'Side-by-Side Dual Comparison Lab';
+      canvasEl.style.display = 'block';
       photoPreview.style.display = 'none';
       syntheticBar.style.display = 'flex';
       if (comparisonSection) {
@@ -803,9 +804,59 @@ document.addEventListener('DOMContentLoaded', () => {
       if (cmpSusSr && sus.plates && sus.plates.super_res) cmpSusSr.src = sus.plates.super_res;
       if (cmpSusFft && sus.plates && sus.plates.fft_spectrum) cmpSusFft.src = sus.plates.fft_spectrum;
 
+      // Render dual side-by-side comparison directly in the main top viewport
+      if (canvasEl && ctx && gen.sample_image && sus.sample_image) {
+        canvasEl.style.display = 'block';
+        canvasEl.width = 960;
+        canvasEl.height = 420;
+        ctx.fillStyle = '#0a0d14';
+        ctx.fillRect(0, 0, canvasEl.width, canvasEl.height);
+
+        const imgGen = new Image();
+        const imgSus = new Image();
+        let loaded = 0;
+        const renderDualNotes = () => {
+          loaded++;
+          if (loaded === 2) {
+            ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
+            ctx.fillStyle = '#0a0d14';
+            ctx.fillRect(0, 0, canvasEl.width, canvasEl.height);
+
+            const halfW = canvasEl.width / 2;
+            const padX = 20;
+            const topY = 46;
+            const noteW = halfW - padX * 2;
+            const noteH = canvasEl.height - 64;
+
+            // Authentic Genuine Note on Left
+            ctx.drawImage(imgGen, padX, topY, noteW, noteH);
+            ctx.fillStyle = '#10b981';
+            ctx.font = 'bold 13px ui-monospace, monospace';
+            ctx.fillText('● AUTHENTIC INTAGLIO (GENUINE)', padX, 28);
+
+            // Counterfeit Halftone Note on Right
+            ctx.drawImage(imgSus, halfW + padX, topY, noteW, noteH);
+            ctx.fillStyle = '#ef4444';
+            ctx.font = 'bold 13px ui-monospace, monospace';
+            ctx.fillText('▲ COUNTERFEIT CMYK DITHERED (SUSPECT)', halfW + padX, 28);
+
+            // Vertical Center Divider Line
+            ctx.strokeStyle = '#334155';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(halfW, 12);
+            ctx.lineTo(halfW, canvasEl.height - 12);
+            ctx.stroke();
+          }
+        };
+        imgGen.onload = renderDualNotes;
+        imgSus.onload = renderDualNotes;
+        imgGen.src = gen.sample_image;
+        imgSus.src = sus.sample_image;
+      }
+
       if (comparisonSection) {
         comparisonSection.style.display = 'block';
-        comparisonSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
       }
 
       updateTelemetryUI(gen);
