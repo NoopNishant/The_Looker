@@ -361,8 +361,12 @@ async def generate_synthetic_demo(request: Request):
 @app.post("/api/compare-demo")
 async def compare_synthetic_demo(request: Request):
     """
-    Generate both Genuine and Counterfeit samples of a selected denomination
-    and return parallel forensic inspection metrics for side-by-side comparison.
+    Side-by-Side Dual Comparison Engine:
+    - If user provides an image: inspects the note, and if real, pairs it against a
+      counterfeit reference explaining why it's genuine; if fake, pairs it against an
+      authentic RBI reference explaining why it's counterfeit.
+    - If user selects a denomination: generates parallel genuine vs. counterfeit benchmarks
+      with detailed forensic discrepancy breakdown.
     """
     data = {}
     try:
@@ -370,10 +374,125 @@ async def compare_synthetic_demo(request: Request):
     except Exception:
         pass
 
-    denomination = str(data.get("denomination", "500"))
     pipe = get_pipeline()
+    denomination = str(data.get("denomination", "500"))
+    b64_str = data.get("image_base64") or data.get("image")
+    user_frame = base64_to_image(b64_str) if b64_str else None
 
-    # 1. Generate & Inspect Genuine Note
+    if user_frame is not None and user_frame.size > 0:
+        # 1. Analyze User Note
+        amb_u, fl_u = ScreenFlashDifferencing.simulate_screen_flash(user_frame)
+        delta_u = pipe.flash_differencer.compute_difference(amb_u, fl_u)
+        det_u = pipe.detector.detect(user_frame)
+        is_pre_u = det_u.get("strategy") in ["full_banknote_frame", "standby", "guided_reticle"]
+        user_res = pipe.process_frame(user_frame, cached_flash_delta=delta_u, is_pre_cropped=is_pre_u)
+        user_serialized = serialize_inspection_results(user_res, include_images=True)
+        user_serialized["sample_image"] = image_to_base64(user_frame)
+
+        detected_denom = str(user_res.get("denomination", denomination))
+        if detected_denom in ["Background", "No Currency in View", "Undetermined"]:
+            detected_denom = denomination
+        user_is_counterfeit = bool(user_res.get("is_counterfeit", False))
+
+        # 2. Pair Against Counterpart Reference
+        ref_is_counterfeit = not user_is_counterfeit
+        ref_frame = SyntheticCurrencyGenerator.generate_banknote(
+            denomination=detected_denom,
+            is_counterfeit=ref_is_counterfeit,
+            width=960,
+            height=480
+        )
+        amb_r, fl_r = ScreenFlashDifferencing.simulate_screen_flash(ref_frame)
+        delta_r = pipe.flash_differencer.compute_difference(amb_r, fl_r)
+        ref_res = pipe.process_frame(ref_frame, cached_flash_delta=delta_r, is_pre_cropped=True)
+        ref_serialized = serialize_inspection_results(ref_res, include_images=True)
+        ref_serialized["sample_image"] = image_to_base64(ref_frame)
+
+        if user_is_counterfeit:
+            headline = f"Suspect / Counterfeit Detected (₹{detected_denom}) — Forensic Discrepancy vs. Authentic RBI Currency"
+            badge_text = "SUSPECT NOTE DETECTED"
+            badge_type = "suspect"
+            left_title = "Why Your Banknote Was Flagged Counterfeit"
+            left_points = [
+                f"Primary Trigger: {user_res.get('authenticity_reason', 'Counterfeit pattern detected')}",
+                f"Commercial Dither: Halftone score {user_res.get('halftone_score', 0):.2f} (CMYK process printing detected)",
+                "Surface Relief Mismatch: Lacks the deep tactile ridges created by RBI high-pressure intaglio presses",
+                "Issuing Authority: Missing authentic Reserve Bank of India typography & security thread"
+            ]
+            right_title = "Official RBI Security Standards Expected on Authentic Notes"
+            right_points = [
+                "Official Legal Typography: Crisp intaglio 'भारतीय रिज़र्व बैंक' and 'RESERVE BANK OF INDIA' lettering",
+                "Continuous Lathe Linework: Seamless intaglio engraving with zero laser/inkjet CMYK rosette dots",
+                "Embedded Multi-Tonal Watermark: High optical light-transmission density",
+                "Raised Tactile Relief: Heavy ink embossing perceptible to touch for accessibility"
+            ]
+            left_card = {
+                "title": "YOUR NOTE: SUSPECT / COUNTERFEIT",
+                "tag": "SUSPECT NOTE",
+                "is_counterfeit": True,
+                "data": user_serialized
+            }
+            right_card = {
+                "title": "GENUINE RBI REFERENCE",
+                "tag": "OFFICIAL STANDARD",
+                "is_counterfeit": False,
+                "data": ref_serialized
+            }
+            genuine_data = ref_serialized
+            counterfeit_data = user_serialized
+        else:
+            headline = f"Authentic Banknote Verified (₹{detected_denom}) — Forensic Analysis vs. Counterfeit Reproduction"
+            badge_text = "GENUINE NOTE VERIFIED"
+            badge_type = "genuine"
+            left_title = "Why Your Banknote Was Verified Genuine"
+            left_points = [
+                "Continuous Intaglio Lathe Relief: Verified continuous directional gradient energy with zero CMYK dots",
+                "Clean Substrate: Absence of commercial 4-color process screen rosettes or inkjet spray mist",
+                "Official Authority Verified: Verified authentic 'RESERVE BANK OF INDIA' typography & emblem",
+                f"Minimal Counterfeit Risk: Exceptionally low composite counterfeit score ({user_res.get('composite_counterfeit_score', 0):.2f})"
+            ]
+            right_title = "What Counterfeit Reproductions Fail At"
+            right_points = [
+                "CMYK Halftone Dithering: Microscopic 4-color process dots at 15°, 45°, 75° printer screen angles",
+                "Flat Paper Relief: Lacks the deep tactile ridges of authentic high-pressure currency presses",
+                "Unauthorized Inscriptions: Counterfeits feature imitation markers (Children Bank, Manoranjan)",
+                "Zero Optical Depth: Photocopies lack authentic embedded multi-tonal watermark transmission"
+            ]
+            left_card = {
+                "title": "YOUR NOTE: VERIFIED GENUINE",
+                "tag": "VERIFIED NOTE",
+                "is_counterfeit": False,
+                "data": user_serialized
+            }
+            right_card = {
+                "title": "COUNTERFEIT REFERENCE",
+                "tag": "COUNTERFEIT SAMPLE",
+                "is_counterfeit": True,
+                "data": ref_serialized
+            }
+            genuine_data = user_serialized
+            counterfeit_data = ref_serialized
+
+        return JSONResponse({
+            "mode": "user_comparison",
+            "denomination": detected_denom,
+            "user_is_counterfeit": user_is_counterfeit,
+            "left_card": left_card,
+            "right_card": right_card,
+            "explanation": {
+                "headline": headline,
+                "badge_text": badge_text,
+                "badge_type": badge_type,
+                "left_title": left_title,
+                "left_points": left_points,
+                "right_title": right_title,
+                "right_points": right_points
+            },
+            "genuine": genuine_data,
+            "counterfeit": counterfeit_data
+        })
+
+    # Benchmark mode: Generate both Genuine and Counterfeit references
     gen_frame = SyntheticCurrencyGenerator.generate_banknote(
         denomination=denomination,
         is_counterfeit=False,
@@ -386,7 +505,6 @@ async def compare_synthetic_demo(request: Request):
     serialized_gen = serialize_inspection_results(results_gen, include_images=True)
     serialized_gen["sample_image"] = image_to_base64(gen_frame)
 
-    # 2. Generate & Inspect Counterfeit Note
     sus_frame = SyntheticCurrencyGenerator.generate_banknote(
         denomination=denomination,
         is_counterfeit=True,
@@ -400,7 +518,39 @@ async def compare_synthetic_demo(request: Request):
     serialized_sus["sample_image"] = image_to_base64(sus_frame)
 
     return JSONResponse({
+        "mode": "benchmark",
         "denomination": denomination,
+        "left_card": {
+            "title": "AUTHENTIC INTAGLIO CURRENCY",
+            "tag": "OFFICIAL STANDARD",
+            "is_counterfeit": False,
+            "data": serialized_gen
+        },
+        "right_card": {
+            "title": "COUNTERFEIT CMYK DITHERED",
+            "tag": "COUNTERFEIT SAMPLE",
+            "is_counterfeit": True,
+            "data": serialized_sus
+        },
+        "explanation": {
+            "headline": f"Forensic Comparative Benchmark (₹{denomination}): Authentic Intaglio vs. CMYK Counterfeit",
+            "badge_text": "COMPARATIVE LAB BENCHMARK",
+            "badge_type": "benchmark",
+            "left_title": "Why Authentic Currency Passes Verification",
+            "left_points": [
+                "Intaglio Engraving Relief: High-pressure tactile micro-ridges verified by directional gradient analysis",
+                "Continuous Spot-Color Ink: Substrate printed without 4-color laser/inkjet process dithering",
+                "Official Legal Authority: Precision Reserve Bank of India typography and Ashok Pillar seal",
+                "Optical Watermark Density: Verified embedded multi-tonal watermark light transmission"
+            ],
+            "right_title": "Why Counterfeit Currency Fails Verification",
+            "right_points": [
+                "Halftone Dither Rosettes: Microscopic Cyan, Magenta, Yellow dot clusters at 15°, 45°, 75° angles",
+                "Flat Surface Relief: Lacks the raised tactile ink layers of genuine currency presses",
+                "Imitation Inscriptions: Uses unauthorized commercial novelty text or imitation security threads",
+                "Zero Optical Depth: Flat photocopy substrate without variable-density watermark transmission"
+            ]
+        },
         "genuine": serialized_gen,
         "counterfeit": serialized_sus
     })

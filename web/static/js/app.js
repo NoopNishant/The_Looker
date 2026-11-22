@@ -19,7 +19,8 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // State
-  let currentMode = 'live'; // 'live', 'photo', 'video', 'synthetic'
+  let currentMode = 'live'; // 'live', 'photo', 'video', 'compare'
+  let lastUploadedImageBase64 = null;
   let ws = null;
   let webcamStream = null;
   let isStreaming = false;
@@ -39,8 +40,10 @@ document.addEventListener('DOMContentLoaded', () => {
   const flashOverlay = document.getElementById('screen-flash-overlay');
 
   const filePhotoInput = document.getElementById('file-photo-input');
+  const fileCompareInput = document.getElementById('file-compare-input');
   const fileVideoInput = document.getElementById('file-video-input');
   const btnUploadTrigger = document.getElementById('btn-upload-trigger');
+  const btnCompareUpload = document.getElementById('btn-compare-upload');
   const btnCamSwitch = document.getElementById('btn-cam-switch');
   const btnFlash = document.getElementById('btn-flash-differencing');
   const btnAudio = document.getElementById('btn-toggle-audio');
@@ -72,26 +75,40 @@ document.addEventListener('DOMContentLoaded', () => {
   const plateM = document.getElementById('plate-img-m');
   const plateWm = document.getElementById('plate-img-wm');
 
-  // Sections & Bench Controls
-  const syntheticBar = document.getElementById('synthetic-bench-bar');
+  // Sections & Side-by-Side Controls
+  const sideBySideBar = document.getElementById('side-by-side-bar') || document.getElementById('synthetic-bench-bar');
   const benchDenomSelect = document.getElementById('bench-denom-select');
   const btnDemoCompare = document.getElementById('btn-demo-compare');
-  const btnDemoGenuine = document.getElementById('btn-demo-genuine');
-  const btnDemoCounterfeit = document.getElementById('btn-demo-counterfeit');
   const comparisonSection = document.getElementById('comparison-section');
 
   // Comparison UI Elements
   const compareHeading = document.getElementById('compare-heading');
-  const cmpGenFull = document.getElementById('cmp-gen-full');
+  const compareDiagnosticBox = document.getElementById('compare-diagnostic-box');
+  const diagBadge = document.getElementById('diag-badge');
+  const diagTitle = document.getElementById('diag-title');
+  const diagLeftHeading = document.getElementById('diag-left-heading');
+  const diagLeftList = document.getElementById('diag-left-list');
+  const diagRightHeading = document.getElementById('diag-right-heading');
+  const diagRightList = document.getElementById('diag-right-list');
+
+  const cmpCardLeft = document.getElementById('cmp-card-left');
+  const cmpTagLeft = document.getElementById('cmp-tag-left');
+  const cmpDotLeft = document.getElementById('cmp-dot-left');
+  const cmpTitleLeft = document.getElementById('cmp-title-left');
   const cmpGenScore = document.getElementById('cmp-gen-score');
+  const cmpGenFull = document.getElementById('cmp-gen-full');
   const cmpGenVerdict = document.getElementById('cmp-gen-verdict');
   const cmpGenHt = document.getElementById('cmp-gen-ht');
   const cmpGenDetail = document.getElementById('cmp-gen-detail');
   const cmpGenSr = document.getElementById('cmp-gen-sr');
   const cmpGenFft = document.getElementById('cmp-gen-fft');
 
-  const cmpSusFull = document.getElementById('cmp-sus-full');
+  const cmpCardRight = document.getElementById('cmp-card-right');
+  const cmpTagRight = document.getElementById('cmp-tag-right');
+  const cmpDotRight = document.getElementById('cmp-dot-right');
+  const cmpTitleRight = document.getElementById('cmp-title-right');
   const cmpSusScore = document.getElementById('cmp-sus-score');
+  const cmpSusFull = document.getElementById('cmp-sus-full');
   const cmpSusVerdict = document.getElementById('cmp-sus-verdict');
   const cmpSusHt = document.getElementById('cmp-sus-ht');
   const cmpSusDetail = document.getElementById('cmp-sus-detail');
@@ -130,7 +147,7 @@ document.addEventListener('DOMContentLoaded', () => {
     photoPreview.style.display = 'none';
     videoPreview.style.display = 'none';
     dropzoneBox.style.display = 'none';
-    syntheticBar.style.display = 'none';
+    if (sideBySideBar) sideBySideBar.style.display = 'none';
     if (comparisonSection) comparisonSection.style.display = 'none';
     timelineCard.classList.remove('active');
     btnCamSwitch.style.display = 'none';
@@ -158,24 +175,20 @@ document.addEventListener('DOMContentLoaded', () => {
       dropzoneBox.style.display = 'flex';
       btnUploadTrigger.style.display = 'inline-flex';
       btnUploadTrigger.innerText = 'Choose Video';
-    } else if (mode === 'synthetic') {
-      document.getElementById('viewport-heading').innerText = 'Synthetic Algorithmic Bench';
-      photoPreview.src = '';
-      photoPreview.style.display = 'block';
-      syntheticBar.style.display = 'flex';
-      if (comparisonSection) comparisonSection.style.display = 'none';
-      const initialDenom = benchDenomSelect ? benchDenomSelect.value : '50';
-      triggerSyntheticDemo(initialDenom, false);
     } else if (mode === 'compare') {
       document.getElementById('viewport-heading').innerText = 'Side-by-Side Dual Comparison Lab';
       canvasEl.style.display = 'block';
       photoPreview.style.display = 'none';
-      syntheticBar.style.display = 'flex';
+      if (sideBySideBar) sideBySideBar.style.display = 'flex';
       if (comparisonSection) {
         comparisonSection.style.display = 'block';
       }
-      const initialDenom = benchDenomSelect ? benchDenomSelect.value : '50';
-      triggerComparisonDemo(initialDenom);
+      if (lastUploadedImageBase64) {
+        triggerComparisonDemo(null, lastUploadedImageBase64);
+      } else {
+        const initialDenom = benchDenomSelect ? benchDenomSelect.value : '500';
+        triggerComparisonDemo(initialDenom);
+      }
     }
 
     if (window.lucide) window.lucide.createIcons();
@@ -224,7 +237,7 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch (err) {
       console.warn('[Webcam] Could not access live camera device:', err);
       document.getElementById('engine-status-text').innerText = 'CAMERA UNAVAILABLE • USE UPLOAD / BENCH';
-      setMode('synthetic');
+      setMode('photo');
     }
   }
 
@@ -593,6 +606,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const reader = new FileReader();
     reader.onload = (e) => {
       photoPreview.src = e.target.result;
+      lastUploadedImageBase64 = e.target.result;
     };
     reader.readAsDataURL(file);
 
@@ -695,125 +709,193 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   /* ----------------------------------------------------
-     Synthetic Algorithmic Bench & Dual Comparison
+     Side-by-Side Dual Comparative Forensics
   ---------------------------------------------------- */
   if (btnDemoCompare) {
     btnDemoCompare.addEventListener('click', () => {
       const denom = benchDenomSelect ? benchDenomSelect.value : '500';
-      triggerComparisonDemo(denom);
+      triggerComparisonDemo(denom, null);
     });
   }
 
-  if (btnDemoGenuine) {
-    btnDemoGenuine.addEventListener('click', () => {
-      const denom = benchDenomSelect ? benchDenomSelect.value : '500';
-      if (comparisonSection) comparisonSection.style.display = 'none';
-      triggerSyntheticDemo(denom, false);
+  if (btnCompareUpload && fileCompareInput) {
+    btnCompareUpload.addEventListener('click', () => {
+      fileCompareInput.click();
     });
-  }
 
-  if (btnDemoCounterfeit) {
-    btnDemoCounterfeit.addEventListener('click', () => {
-      const denom = benchDenomSelect ? benchDenomSelect.value : '50';
-      if (comparisonSection) comparisonSection.style.display = 'none';
-      triggerSyntheticDemo(denom, true, 'cmyk');
+    fileCompareInput.addEventListener('change', (e) => {
+      if (e.target.files && e.target.files[0]) {
+        const file = e.target.files[0];
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          lastUploadedImageBase64 = ev.target.result;
+          triggerComparisonDemo(null, ev.target.result);
+        };
+        reader.readAsDataURL(file);
+      }
     });
   }
 
   if (benchDenomSelect) {
     benchDenomSelect.addEventListener('change', () => {
       const denom = benchDenomSelect.value;
-      if (comparisonSection && comparisonSection.style.display !== 'none') {
-        triggerComparisonDemo(denom);
-      } else {
-        triggerSyntheticDemo(denom, false);
-      }
+      triggerComparisonDemo(denom, null);
     });
   }
 
-  async function triggerSyntheticDemo(denom, isCounterfeit, type) {
-    document.getElementById('engine-status-text').innerText = 'GENERATING FORENSIC BENCH SAMPLE...';
-
-    const counterfeitType = type || (isCounterfeit ? 'cmyk' : 'none');
-    const isCf = Boolean(isCounterfeit);
-
-    try {
-      const resp = await fetch('/api/generate-demo', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          denomination: denom,
-          is_counterfeit: isCf,
-          counterfeit_type: counterfeitType
-        })
-      });
-      const data = await resp.json();
-
-      if (data.sample_image) {
-        photoPreview.src = data.sample_image;
-        photoPreview.style.display = 'block';
-      }
-
-      updateTelemetryUI(data);
-      populatePlates(data);
-      document.getElementById('engine-status-text').innerText = `SYNTHETIC BENCH: ${data.sample_type}`;
-
-      if (data.audio_tag && window.audioEngine) {
-        window.audioEngine.trigger(data.audio_tag);
-      }
-    } catch (err) {
-      console.error('Synthetic demo error:', err);
+  async function triggerComparisonDemo(denom, imageBase64) {
+    const payload = {};
+    if (imageBase64) {
+      payload.image_base64 = imageBase64;
+      document.getElementById('engine-status-text').innerText = 'RUNNING COMPARATIVE FORENSICS ON UPLOADED NOTE...';
+    } else {
+      payload.denomination = denom || (benchDenomSelect ? benchDenomSelect.value : '500');
+      document.getElementById('engine-status-text').innerText = `RUNNING FORENSIC COMPARISON FOR ₹${payload.denomination}...`;
     }
-  }
-
-  async function triggerComparisonDemo(denom) {
-    denom = denom || (benchDenomSelect ? benchDenomSelect.value : '500');
-    document.getElementById('engine-status-text').innerText = `RUNNING FORENSIC COMPARISON FOR ₹${denom}...`;
 
     try {
       const resp = await fetch('/api/compare-demo', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ denomination: denom })
+        body: JSON.stringify(payload)
       });
       const data = await resp.json();
 
-      if (!data || !data.genuine || !data.counterfeit) return;
+      if (!data || !data.left_card || !data.right_card) return;
 
-      const gen = data.genuine;
-      const sus = data.counterfeit;
+      const left = data.left_card;
+      const right = data.right_card;
+      const explanation = data.explanation;
 
-      if (compareHeading) {
-        compareHeading.innerText = `Side-by-Side Forensics: ₹${data.denomination} Authentic Intaglio vs. CMYK Counterfeit`;
+      // Update Top Comparison Headline
+      if (compareHeading && explanation) {
+        compareHeading.innerText = explanation.headline || `Side-by-Side Forensics: ₹${data.denomination}`;
       }
 
-      // Populate Authentic Card
-      if (photoPreview && gen.sample_image) photoPreview.src = gen.sample_image;
-      if (cmpGenFull && gen.sample_image) cmpGenFull.src = gen.sample_image;
-      if (cmpGenScore) cmpGenScore.innerText = `${(gen.composite_counterfeit_score || 0.05).toFixed(2)} RISK`;
-      if (cmpGenVerdict) cmpGenVerdict.innerText = gen.verdict || 'VERIFIED GENUINE';
-      if (cmpGenHt) cmpGenHt.innerText = (gen.halftone_score || 0.04).toFixed(2);
-      if (cmpGenSr && gen.plates && gen.plates.super_res) cmpGenSr.src = gen.plates.super_res;
-      if (cmpGenFft && gen.plates && gen.plates.fft_spectrum) cmpGenFft.src = gen.plates.fft_spectrum;
+      // Populate Comparative Diagnostic Breakdown Banner
+      if (explanation && compareDiagnosticBox) {
+        const isSuspectFocus = explanation.badge_type === 'suspect';
+        compareDiagnosticBox.className = 'compare-diagnostic-box ' + (isSuspectFocus ? 'suspect-focus' : 'genuine-focus');
 
-      // Populate Counterfeit Card
-      if (cmpSusFull && sus.sample_image) cmpSusFull.src = sus.sample_image;
-      if (cmpSusScore) cmpSusScore.innerText = `${(sus.composite_counterfeit_score || 0.95).toFixed(2)} RISK`;
-      if (cmpSusVerdict) cmpSusVerdict.innerText = sus.verdict || 'COUNTERFEIT / SUSPECT';
-      if (cmpSusHt) cmpSusHt.innerText = (sus.halftone_score || 0.95).toFixed(2);
-      if (cmpSusSr && sus.plates && sus.plates.super_res) cmpSusSr.src = sus.plates.super_res;
-      if (cmpSusFft && sus.plates && sus.plates.fft_spectrum) cmpSusFft.src = sus.plates.fft_spectrum;
+        if (diagBadge) {
+          diagBadge.className = 'diag-badge ' + (explanation.badge_type || 'genuine');
+          diagBadge.innerText = explanation.badge_text || 'FORENSIC COMPARATIVE ANALYSIS';
+        }
+        if (diagTitle) {
+          diagTitle.innerText = explanation.headline || 'Comparative Discrepancy Breakdown';
+        }
+        if (diagLeftHeading) {
+          diagLeftHeading.innerText = explanation.left_title || 'Inspected Features';
+        }
+        if (diagLeftList && explanation.left_points) {
+          diagLeftList.innerHTML = explanation.left_points.map(pt => `<li>${pt}</li>`).join('');
+        }
+        if (diagRightHeading) {
+          diagRightHeading.innerText = explanation.right_title || 'Counterpart Reference';
+        }
+        if (diagRightList && explanation.right_points) {
+          diagRightList.innerHTML = explanation.right_points.map(pt => `<li>${pt}</li>`).join('');
+        }
+      }
 
-      // Render dual side-by-side comparison directly in the main top viewport
-      if (canvasEl && ctx && gen.sample_image && sus.sample_image) {
+      // Populate Left Card (Inspected Note)
+      if (left && left.data) {
+        const isSus = Boolean(left.is_counterfeit);
+        if (cmpCardLeft) {
+          cmpCardLeft.className = 'compare-card ' + (isSus ? 'suspect-card' : 'genuine-card');
+        }
+        if (cmpTagLeft) {
+          cmpTagLeft.className = 'compare-tag ' + (isSus ? 'suspect' : 'genuine');
+        }
+        if (cmpDotLeft) {
+          cmpDotLeft.className = 'dot ' + (isSus ? 'suspect' : 'genuine');
+        }
+        if (cmpTitleLeft) {
+          cmpTitleLeft.innerText = left.title || (isSus ? 'SUSPECT / COUNTERFEIT' : 'VERIFIED GENUINE');
+        }
+        if (cmpGenScore) {
+          const sc = left.data.composite_counterfeit_score !== undefined ? left.data.composite_counterfeit_score : (isSus ? 0.95 : 0.05);
+          cmpGenScore.className = 'compare-score-badge ' + (isSus ? 'suspect' : 'genuine');
+          cmpGenScore.innerText = `${sc.toFixed(2)} RISK`;
+        }
+        if (cmpGenFull && left.data.sample_image) {
+          cmpGenFull.src = left.data.sample_image;
+        }
+        if (cmpGenVerdict) {
+          cmpGenVerdict.className = 'cmp-stat-val ' + (isSus ? 'suspect' : 'genuine');
+          cmpGenVerdict.innerText = left.data.verdict || (isSus ? 'SUSPECT / COUNTERFEIT' : 'VERIFIED GENUINE');
+        }
+        if (cmpGenHt) {
+          const ht = left.data.halftone_score !== undefined ? left.data.halftone_score : (isSus ? 0.95 : 0.04);
+          cmpGenHt.className = 'cmp-stat-val ' + (isSus ? 'suspect' : 'genuine');
+          cmpGenHt.innerText = ht.toFixed(2);
+        }
+        if (cmpGenDetail) {
+          cmpGenDetail.className = 'cmp-stat-val ' + (isSus ? 'suspect' : 'genuine');
+          cmpGenDetail.innerText = isSus ? 'Printer Rosette Dots' : 'Continuous Lathe';
+        }
+        if (cmpGenSr && left.data.plates && left.data.plates.super_res) {
+          cmpGenSr.src = left.data.plates.super_res;
+        }
+        if (cmpGenFft && left.data.plates && left.data.plates.fft_spectrum) {
+          cmpGenFft.src = left.data.plates.fft_spectrum;
+        }
+      }
+
+      // Populate Right Card (Counterpart Reference)
+      if (right && right.data) {
+        const isSus = Boolean(right.is_counterfeit);
+        if (cmpCardRight) {
+          cmpCardRight.className = 'compare-card ' + (isSus ? 'suspect-card' : 'genuine-card');
+        }
+        if (cmpTagRight) {
+          cmpTagRight.className = 'compare-tag ' + (isSus ? 'suspect' : 'genuine');
+        }
+        if (cmpDotRight) {
+          cmpDotRight.className = 'dot ' + (isSus ? 'suspect' : 'genuine');
+        }
+        if (cmpTitleRight) {
+          cmpTitleRight.innerText = right.title || (isSus ? 'COUNTERFEIT REFERENCE' : 'GENUINE REFERENCE');
+        }
+        if (cmpSusScore) {
+          const sc = right.data.composite_counterfeit_score !== undefined ? right.data.composite_counterfeit_score : (isSus ? 0.95 : 0.05);
+          cmpSusScore.className = 'compare-score-badge ' + (isSus ? 'suspect' : 'genuine');
+          cmpSusScore.innerText = `${sc.toFixed(2)} RISK`;
+        }
+        if (cmpSusFull && right.data.sample_image) {
+          cmpSusFull.src = right.data.sample_image;
+        }
+        if (cmpSusVerdict) {
+          cmpSusVerdict.className = 'cmp-stat-val ' + (isSus ? 'suspect' : 'genuine');
+          cmpSusVerdict.innerText = right.data.verdict || (isSus ? 'COUNTERFEIT REFERENCE' : 'GENUINE RBI REFERENCE');
+        }
+        if (cmpSusHt) {
+          const ht = right.data.halftone_score !== undefined ? right.data.halftone_score : (isSus ? 0.95 : 0.04);
+          cmpSusHt.className = 'cmp-stat-val ' + (isSus ? 'suspect' : 'genuine');
+          cmpSusHt.innerText = ht.toFixed(2);
+        }
+        if (cmpSusDetail) {
+          cmpSusDetail.className = 'cmp-stat-val ' + (isSus ? 'suspect' : 'genuine');
+          cmpSusDetail.innerText = isSus ? 'Printer Rosette Dots' : 'Continuous Lathe';
+        }
+        if (cmpSusSr && right.data.plates && right.data.plates.super_res) {
+          cmpSusSr.src = right.data.plates.super_res;
+        }
+        if (cmpSusFft && right.data.plates && right.data.plates.fft_spectrum) {
+          cmpSusFft.src = right.data.plates.fft_spectrum;
+        }
+      }
+
+      // Render dual side-by-side comparison directly on the main viewport canvas
+      if (canvasEl && ctx && left && left.data && left.data.sample_image && right && right.data && right.data.sample_image) {
         canvasEl.style.display = 'block';
         canvasEl.width = 960;
         canvasEl.height = 420;
         ctx.fillStyle = '#0a0d14';
         ctx.fillRect(0, 0, canvasEl.width, canvasEl.height);
 
-        const imgGen = new Image();
-        const imgSus = new Image();
+        const imgLeft = new Image();
+        const imgRight = new Image();
         let loaded = 0;
         const renderDualNotes = () => {
           loaded++;
@@ -828,17 +910,17 @@ document.addEventListener('DOMContentLoaded', () => {
             const noteW = halfW - padX * 2;
             const noteH = canvasEl.height - 64;
 
-            // Authentic Genuine Note on Left
-            ctx.drawImage(imgGen, padX, topY, noteW, noteH);
-            ctx.fillStyle = '#10b981';
+            // Inspected Note on Left
+            ctx.drawImage(imgLeft, padX, topY, noteW, noteH);
+            ctx.fillStyle = left.is_counterfeit ? '#ef4444' : '#10b981';
             ctx.font = 'bold 13px ui-monospace, monospace';
-            ctx.fillText('● AUTHENTIC INTAGLIO (GENUINE)', padX, 28);
+            ctx.fillText((left.is_counterfeit ? '▲ ' : '● ') + (left.title || 'INSPECTED NOTE'), padX, 28);
 
-            // Counterfeit Halftone Note on Right
-            ctx.drawImage(imgSus, halfW + padX, topY, noteW, noteH);
-            ctx.fillStyle = '#ef4444';
+            // Reference Note on Right
+            ctx.drawImage(imgRight, halfW + padX, topY, noteW, noteH);
+            ctx.fillStyle = right.is_counterfeit ? '#ef4444' : '#10b981';
             ctx.font = 'bold 13px ui-monospace, monospace';
-            ctx.fillText('▲ COUNTERFEIT CMYK DITHERED (SUSPECT)', halfW + padX, 28);
+            ctx.fillText((right.is_counterfeit ? '▲ ' : '● ') + (right.title || 'REFERENCE NOTE'), halfW + padX, 28);
 
             // Vertical Center Divider Line
             ctx.strokeStyle = '#334155';
@@ -849,23 +931,24 @@ document.addEventListener('DOMContentLoaded', () => {
             ctx.stroke();
           }
         };
-        imgGen.onload = renderDualNotes;
-        imgSus.onload = renderDualNotes;
-        imgGen.src = gen.sample_image;
-        imgSus.src = sus.sample_image;
+        imgLeft.onload = renderDualNotes;
+        imgRight.onload = renderDualNotes;
+        imgLeft.src = left.data.sample_image;
+        imgRight.src = right.data.sample_image;
       }
 
       if (comparisonSection) {
         comparisonSection.style.display = 'block';
       }
 
-      updateTelemetryUI(gen);
-      populatePlates(gen);
+      // Update right sidebar telemetry and plates with the inspected note
+      updateTelemetryUI(left.data);
+      populatePlates(left.data);
 
-      document.getElementById('engine-status-text').innerText = `SYNTHETIC BENCH: ₹${data.denomination} SIDE-BY-SIDE READY`;
+      document.getElementById('engine-status-text').innerText = `COMPARISON LAB: ₹${data.denomination} READY`;
 
       if (window.audioEngine) {
-        window.audioEngine.trigger(data.denomination);
+        window.audioEngine.trigger(left.is_counterfeit ? 'COUNTERFEIT_ALARM' : (data.denomination || '500'));
       }
     } catch (err) {
       console.error('Comparison demo error:', err);

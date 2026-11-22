@@ -55,10 +55,6 @@
           <i data-lucide="film" style="width: 16px; height: 16px;"></i>
           Video Stream
         </button>
-        <button class="tab-btn" data-mode="synthetic">
-          <i data-lucide="flask-conical" style="width: 16px; height: 16px;"></i>
-          Synthetic Bench
-        </button>
         <button class="tab-btn" data-mode="compare">
           <i data-lucide="columns-2" style="width: 16px; height: 16px;"></i>
           Side-by-Side Lab
@@ -197,8 +193,8 @@
       </aside>
     </main>
 
-    <!-- Synthetic Demonstration Bench Control Bar -->
-    <section class="bench-bar" id="synthetic-bench-bar" style="display:none;">
+    <!-- Side-by-Side Forensic Lab Control Bar -->
+    <section class="bench-bar" id="side-by-side-bar" style="display:none;">
       <div class="bench-group">
         <label for="bench-denom-select" class="bench-label">Denomination:</label>
         <select id="bench-denom-select" class="bench-select">
@@ -213,17 +209,13 @@
       </div>
 
       <div class="bench-actions">
-        <button class="btn-pill accent" id="btn-demo-compare" title="Dual side-by-side comparative inspection of Authentic Intaglio vs Counterfeit Halftone">
+        <button class="btn-pill accent" id="btn-demo-compare" title="Run side-by-side comparative inspection">
           <i data-lucide="columns-2" style="width: 15px; height: 15px;"></i>
-          Side-by-Side Comparison
+          Compare Denomination
         </button>
-        <button class="btn-pill primary" id="btn-demo-genuine">
-          <i data-lucide="shield-check" style="width: 14px; height: 14px;"></i>
-          Inspect Authentic
-        </button>
-        <button class="btn-pill suspect-btn" id="btn-demo-counterfeit">
-          <i data-lucide="shield-alert" style="width: 14px; height: 14px;"></i>
-          Inspect Counterfeit
+        <button class="btn-pill primary" id="btn-compare-upload" title="Upload a banknote photo to compare against its counterpart reference">
+          <i data-lucide="upload" style="width: 14px; height: 14px;"></i>
+          Upload Note to Compare
         </button>
       </div>
     </section>
@@ -238,14 +230,40 @@
         </div>
       </div>
 
+      <!-- Dynamic Forensic Comparative Breakdown Banner -->
+      <div class="compare-diagnostic-box genuine-focus" id="compare-diagnostic-box">
+        <div class="diag-header">
+          <span class="diag-badge genuine" id="diag-badge">FORENSIC COMPARATIVE ANALYSIS</span>
+          <h3 class="diag-title" id="diag-title">Comparative Discrepancy Breakdown</h3>
+        </div>
+        <div class="diag-columns">
+          <div class="diag-col left-col" id="diag-left-col">
+            <h4 class="diag-col-heading" id="diag-left-heading">Verified Authentic Features</h4>
+            <ul class="diag-list" id="diag-left-list">
+              <li>Verified continuous raised intaglio engraving ridges</li>
+              <li>Absence of commercial 4-color CMYK process printer dithering</li>
+              <li>Official Reserve Bank of India typography & Ashok Pillar seal</li>
+            </ul>
+          </div>
+          <div class="diag-col right-col" id="diag-right-col">
+            <h4 class="diag-col-heading" id="diag-right-heading">Counterfeit Discrepancies</h4>
+            <ul class="diag-list" id="diag-right-list">
+              <li>Commercial printer halftone rosettes at 15°, 45°, 75° screen angles</li>
+              <li>Flat paper surface lacking raised mechanical tactile relief</li>
+              <li>Unauthorized novelty markers or imitation security threads</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
       <div class="comparison-grid">
         
-        <!-- Left Pane: Authentic Genuine Note -->
-        <div class="compare-card genuine-card">
+        <!-- Left Pane: Card 1 (Inspected or Authentic) -->
+        <div class="compare-card genuine-card" id="cmp-card-left">
           <div class="compare-card-header">
-            <div class="compare-tag genuine">
-              <span class="dot genuine"></span>
-              AUTHENTIC INTAGLIO CURRENCY
+            <div class="compare-tag genuine" id="cmp-tag-left">
+              <span class="dot genuine" id="cmp-dot-left"></span>
+              <span id="cmp-title-left">AUTHENTIC INTAGLIO CURRENCY</span>
             </div>
             <div class="compare-score-badge genuine" id="cmp-gen-score">0.05 RISK</div>
           </div>
@@ -287,12 +305,12 @@
           </div>
         </div>
 
-        <!-- Right Pane: Counterfeit Halftone Note -->
-        <div class="compare-card suspect-card">
+        <!-- Right Pane: Card 2 (Reference or Counterfeit) -->
+        <div class="compare-card suspect-card" id="cmp-card-right">
           <div class="compare-card-header">
-            <div class="compare-tag suspect">
-              <span class="dot suspect"></span>
-              COUNTERFEIT CMYK DITHERED
+            <div class="compare-tag suspect" id="cmp-tag-right">
+              <span class="dot suspect" id="cmp-dot-right"></span>
+              <span id="cmp-title-right">COUNTERFEIT CMYK DITHERED</span>
             </div>
             <div class="compare-score-badge suspect" id="cmp-sus-score">0.95 RISK</div>
           </div>
@@ -434,6 +452,7 @@
 
   <!-- Hidden File Pickers -->
   <input type="file" id="file-photo-input" accept="image/png, image/jpeg, image/webp" style="display:none;" />
+  <input type="file" id="file-compare-input" accept="image/png, image/jpeg, image/webp" style="display:none;" />
   <input type="file" id="file-video-input" accept="video/mp4, video/webm, video/quicktime" style="display:none;" />
 
   <!-- Scripts -->
