@@ -68,27 +68,45 @@ class BanknoteSecurityValidator:
         max_score = 0.0
         primary_marker = ""
 
-        # Thresholds tuned against real Kaggle notes (real notes peak <0.55)
+        # Calibrated thresholds to ensure zero false positives on genuine RBI notes
+        # while reliably triggering on commercial toy/play/manoranjan currency
         marker_thresholds = {
-            "children_bank_header": 0.68,
-            "full_of_fun_top": 0.68,
+            "children_bank_header": 0.62,
+            "children_word": 0.72,
             "hindi_children_bank": 0.72,
-            "full_of_fun_bot": 0.70,
-            "churan_label_strip": 0.82
+            "manoranjan_bank": 0.86,
+            "full_of_fun_top": 0.72,
+            "full_of_fun_bot": 0.72,
+            "churan_label_strip": 0.92
+        }
+
+        header_templates = {
+            "children_bank_header",
+            "children_word",
+            "hindi_children_bank",
+            "manoranjan_bank",
+            "full_of_fun_top"
         }
 
         for name, templ in self.templates.items():
             th, tw = templ.shape[:2]
             best_v = 0.0
 
-            # Multi-scale check across expected banknote sizes
-            for s in [0.75, 0.85, 0.95, 1.0, 1.05, 1.15, 1.25]:
-                cur_s = base_scale * s
+            # Header markers strictly belong in top portion of banknote
+            search_region = gray[:int(nh * 0.55), :] if name in header_templates else gray
+            s_h, s_w = search_region.shape[:2]
+
+            # Multi-scale check across expected banknote sizes & low-res mobile captures
+            base_s = nw / 360.0
+            candidate_scales = [base_s * s for s in [0.35, 0.50, 0.65, 0.80, 1.0, 1.20, 1.40]]
+            candidate_scales += [s_w / (tw * 2.5), s_w / (tw * 3.5), s_w / (tw * 5.0)]
+
+            for cur_s in set(candidate_scales):
                 sw, sh = int(tw * cur_s), int(th * cur_s)
-                if sw >= nw or sh >= nh or sw < 12 or sh < 10:
+                if sw >= s_w or sh >= s_h or sw < 10 or sh < 6:
                     continue
                 scaled_t = cv2.resize(templ, (sw, sh), interpolation=cv2.INTER_AREA)
-                res = cv2.matchTemplate(gray, scaled_t, cv2.TM_CCOEFF_NORMED)
+                res = cv2.matchTemplate(search_region, scaled_t, cv2.TM_CCOEFF_NORMED)
                 _, max_v, _, _ = cv2.minMaxLoc(res)
                 if max_v > best_v:
                     best_v = float(max_v)
@@ -107,9 +125,11 @@ class BanknoteSecurityValidator:
         # Human-readable label for detected fake marker
         marker_descriptions = {
             "children_bank_header": "CHILDREN BANK OF INDIA Header",
+            "children_word": "CHILDREN Bank Marking",
             "full_of_fun_top": "FULL OF FUN Watermark Text",
             "full_of_fun_bot": "FULL OF FUN Denomination Marking",
             "hindi_children_bank": "भारतीय बच्चों का बैंक (Children Bank) Text",
+            "manoranjan_bank": "भारतीय मनोरंजन बैंक (Manoranjan Bank) Text",
             "churan_label_strip": "CHURAN LABEL Imitation Security Thread"
         }
 

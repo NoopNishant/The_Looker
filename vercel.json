@@ -9,7 +9,7 @@
   ],
   "functions": {
     "api/index.py": {
-      "includeFiles": "{web/**,models/**,core/**,synthetic_data.py}",
+      "includeFiles": "{web/**,models/**,core/**,data/counterfeit_templates/**,synthetic_data.py}",
       "maxDuration": 30
     }
   }
