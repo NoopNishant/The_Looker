@@ -1,6 +1,6 @@
 # The Looker: Currency Forensics & Counterfeit Guard
 
-A high-performance edge computer vision and forensic analysis platform engineered for CPU execution and standard laptop webcams. Features an editorial, minimalist web studio in warm beige and pastel spectrums, integrating deep learning semantic classification, active optical screen-flash differencing, neural super-resolution micro-texture enhancement, 2D FFT halftone rosette detection, and non-visual discreet acoustic feedback.
+A high-performance edge computer vision and forensic analysis platform engineered for standard CPU execution and live laptop webcams. Features an editorial, minimalist web studio in warm linen and pastel spectrums, integrating deep learning semantic classification, active optical screen-flash differencing, neural super-resolution micro-texture enhancement, 2D FFT halftone rosette detection, robust face/skin-suppressed quadrilateral localization, and non-visual discreet acoustic feedback.
 
 ---
 
@@ -10,61 +10,90 @@ A high-performance edge computer vision and forensic analysis platform engineere
   - **Genuine Verdict**: Soft sage / pistachio (`#4E7259`, background `#EBF2ED`)
   - **Counterfeit / Suspect**: Muted terracotta / dusty coral (`#B84A4A`, background `#FDF0EE`)
   - **Telemetry & Focus**: Warm amber sand (`#A58266`, background `#F7F1EB`)
-- **Live Feed Detection**:
-  - High-speed WebSocket streaming (`/ws/live`) delivering live inference bounding boxes, central targeting reticles, and risk metrics at **>25–30 FPS**.
-  - Camera switching support (user-facing and environment cameras).
+- **4 Dedicated Forensic Operational Modes**:
+  1. **Live Camera**:
+     - High-speed WebSocket (`/ws/live`) and binary HTTP (`/api/live-frame`) streaming delivering real-time bounding quads, central reticles, and risk metrics at **>25–35 FPS**.
+     - Face & skin suppression to actively eliminate user hands and faces from triggering false banknote detections.
+     - Temporal stabilization that votes denomination over recent frames and adds hysteresis to counterfeit verdicts, eliminating reticle flicker.
+     - Dual camera support with front/environment camera switching.
+  2. **Photo Forensics**:
+     - Instant drag-and-drop or file upload for high-resolution images (PNG, JPG, WEBP).
+     - Generates all 6 multi-spectral micro-texture inspection plates (CLAHE micro-relief, 2x ESPCN neural super-res, 2D FFT rosette spectrum, Cyan & Magenta ink separations, and watermark mask).
+  3. **Video Stream**:
+     - Multi-keyframe timeline decomposition (MP4, MOV, WEBM) showing per-frame verdicts, thumbnail strips, and average counterfeit risk.
+  4. **Side-by-Side Dual Comparison Lab**:
+     - **Bidirectional Comparative Analysis**:
+       - **When a Genuine Note is Detected**: Places the user's note on the left (`YOUR NOTE: VERIFIED GENUINE`) and contrasts it against a synthetic counterfeit reference on the right, providing an educational discrepancy breakdown (*Continuous intaglio lathe relief, absence of 4-color process dithering, authentic RBI typography* vs. *flat relief and halftone rosettes*).
+       - **When a Counterfeit / Suspect Note is Detected**: Places the user's note on the left (`YOUR NOTE: SUSPECT / COUNTERFEIT`) and pairs it against an authentic RBI reference on the right, explaining the detected fraud markers (*e.g., Children Bank / Manoranjan Bank, commercial dithering*) vs. authentic Reserve Bank of India security standards.
+     - **Direct Note Upload Options**: Upload a banknote photo to compare directly via the top viewport header button, section header button, control bar, or by clicking anywhere directly on the split-screen canvas.
+     - **Denomination Benchmarks**: Instant 1-click comparison across all Indian Rupee denominations (₹10 – ₹2000).
 - **In-Browser Screen-Flash Watermark Extraction**:
   - Click **"Pulse Watermark Flash"** to trigger a full-screen white illumination pulse; snaps paired ambient and illuminated frames to compute the optical transmission delta $\Delta I = |I_{flash} - I_{ambient}|$.
-- **Uploaded Media Detection**:
-  - **Photos (PNG, JPG, WEBP)**: Instant drag-and-drop forensic breakdown with all 6 multi-spectral micro-texture inspection plates.
-  - **Videos (MP4, MOV, WEBM)**: Timeline keyframe decomposition showing per-frame verdicts, thumbnail strips, and average counterfeit score.
-- **Synthetic Demonstration Bench**:
-  - 1-click test buttons to instantly inspect authentic intaglio notes vs. CMYK halftone counterfeits vs. commercial toy fake notes ("Children Bank of India", "Full of Fun", "Churan Label") without requiring physical cash.
-- **Side-by-Side Comparative Lab**:
-  - Dual comparative inspection rendering Authentic Intaglio vs. Counterfeit plates simultaneously.
 - **Discreet Web Audio API Synthesizer**:
   - Pure in-browser acoustic rhythm synthesis mapped to each denomination without disruptive Text-to-Speech.
 
 ---
 
-## Core Forensic Capabilities
+## Core Forensic & Computer Vision Architecture
 
-1. **Multi-Task CNN Backbone (MobileNetV3-Small)**:
-   - Optimized for CPU inference (<15ms forward pass latency).
-   - **Head 1 (Denomination)**: Multi-class classification (Cross-Entropy loss) over standard banknote denominations + background.
-   - **Head 2 (Counterfeit Probability)**: Single-logit binary prediction (BCE loss with Sigmoid) evaluating counterfeit likelihood.
+### 1. Robust Banknote Localization & Face-Suppressed Tracking (`core/detector.py` / `detector.py`)
+- **Active Face & Skin Suppression**: Built-in Haar Cascade face detection coupled with YCrCb skin chrominance masking (`Cb ∈ [77, 127]`, `Cr ∈ [133, 173]`) aggressively rejects human faces, fingers, and hands from false banknote detections.
+- **Dual Candidate Generators**:
+  - Auto-thresholded adaptive Canny edge detection for high-contrast scenes.
+  - Lab-space background-difference color distance masking ($\Delta E_{Lab}$ against outer border pixels) to effortlessly isolate low-contrast notes (e.g., stone-grey ₹500 resting on a grey desk).
+- **Perspective-Aware Quadrilateral Geometry**: Evaluates candidate aspect ratios on the 3D quadrilateral polygon (tolerating tilt between 1.55 and 2.95).
+- **Perspective-Rectified Upright Cropping**: Quad fitting (`approxPolyDP`) produces an upright, perspective-corrected, background-free note crop matching the denomination's dimensional ratio.
+- **Temporal Reticle Smoothing**: Corner-level exponential smoothing with large-jump reset and track-hold ensures smooth, zero-flicker live reticle tracking.
 
-2. **Optical Preprocessing Pipeline**:
-   - **CLAHE (Contrast Limited Adaptive Histogram Equalization)**: Contrast enhancement applied in LAB color space across the Lightness (L) channel, preserving color integrity while highlighting latent embossing and paper grain.
-   - **Screen-Flash Differencing Module**: Active optical inspection using laptop monitor illumination. Rapidly pulses a pure white screen canvas and captures difference image $\Delta I = |I_{flash} - I_{ambient}|$ to reveal embedded semi-translucent watermarks, security threads, and see-through registration marks.
+### 2. Calibrated Multi-Cue Denomination Deduction (`core/denomination_engine.py` / `denomination_engine.py`)
+- **Illumination-Invariant Chromaticity**: Evaluates normalized RGB coordinates ($r = R/\Sigma, g = G/\Sigma, b = B/\Sigma$) strictly on well-exposed pixels (excluding specular glare and near-black ink).
+- **Saturation-Weighted Circular Mean Hue**: Computes circular mean angles for Hue ($\theta = \text{atan2}(\Sigma w \sin \alpha, \Sigma w \cos \alpha)$), completely eliminating errors caused by OpenCV's 0°/180° red hue boundary wrap-around.
+- **Multi-Reference Profiles**: Equips denominations with alternate reference anchors (`chroma_alt`, `hue_alt`) covering daylight vs. incandescent lighting shifts.
+- **Renormalized Probability Blending**: Renormalizes CNN logits strictly across valid denominations, preventing background mass leakage.
+- **Calibrated Margin Confidence**: Maps top-1 vs. top-2 winning margins directly to calibrated confidence percentages (0.50 – 0.99).
 
-3. **Super-Resolution Halftone Detector**:
-   - **ESPCN (Efficient Sub-Pixel Convolutional Network)**: Neural super-resolution upscaling (2x magnification) on micro-texture patches directly on CPU.
-   - **CMYK Plate Decomposition**: Separates RGB into Cyan, Magenta, Yellow, and Key (Black) plates with dark-pixel stabilization.
-   - **2D FFT Rosette & Dot Detector**: Computes 2D Fast Fourier Transform power spectrum to detect periodic harmonic lattice peaks characteristic of commercial inkjet and color laser printer halftones vs. genuine continuous-line intaglio engraving.
+### 3. Temporal Feed Stabilization (`core/pipeline.py` / `pipeline.py`)
+- **Sliding-Window Voting**: When operating in live stream mode (`live=True`), the `TemporalStabilizer` votes denomination candidates across recent frames.
+- **Verdict Hysteresis**: Requires multiple consistent suspect frames before triggering alarms and debounces acoustic feedback so single-frame misreads never emit false signals.
 
-4. **Discreet Audio Feedback**:
-   - Synthesizes clean 16-bit 44.1 kHz PCM sine and harmonic pulse patterns directly in NumPy.
-   - Replaces disruptive Text-to-Speech (TTS) with subtle tactile acoustic rhythms:
-     - **10**: Single crisp high pulse (880 Hz, 80ms)
-     - **20**: Double micro-pulse rhythm
-     - **50**: Melodic rising third
-     - **100**: Rising fifth chime
-     - **200**: Triple staccato pulse
-     - **500**: Resonant major triad chord
-     - **2000**: Quadruple ascending arpeggio
-     - **COUNTERFEIT / SUSPECT**: Urgent discordant dual-sawtooth buzz (180 Hz + 194 Hz)
-   - Zero-latency asynchronous playback via Windows `winsound` in-memory buffers with automatic debouncing.
+### 4. Realistic Synthetic Scene & Banknote Generation (`synthetic_data.py`)
+- **Authentic Aspect Ratios**: Implements official Mahatma Gandhi (New) Series dimensional aspect ratios:
+  - ₹10: **1.95** | ₹20: **2.03** | ₹50: **2.03** | ₹100: **2.15** | ₹200: **2.21** | ₹500: **2.27** | ₹2000: **2.52**
+- **Camera Scene Simulation (`generate_scene()`)**: Renders banknotes inside realistic cluttered environments featuring:
+  - 3D in-plane rotation and keystone perspective warping.
+  - Incandescent / cool-white color-temperature casts and exposure variations.
+  - Optical lens vignetting, soft contact drop shadows, and Gaussian sensor noise.
+  - Desk background textures with random clutter occlusions.
+  - Outputs ground-truth $(4, 2)$ corner coordinates for detector validation.
+- **Synthetic Banknote Generation (`generate_banknote()`)**: Generates both authentic intaglio currency (guilloche waves, microprint, embedded watermark) and counterfeit currency (CMYK halftone rosette screens, flat relief, and toy spoof markers).
 
-5. **Banknote Security Feature & Toy Counterfeit Validator**:
-   - Multi-scale normalized template matching targeting unauthorized commercial toy banknote markers:
-     - Header spoofing: `"CHILDREN BANK OF INDIA"` and `"भारतीय बच्चों का बैंक"` vs. authentic `"RESERVE BANK OF INDIA"`.
-     - Security thread imitation: `"CHURAN LABEL"` printed bands on the right border.
-     - Denomination & watermark spoofing: `"FULL OF FUN"`.
-   - Continuous directional gradient relief variance analysis for authentic intaglio embossing vs flat photocopies.
+### 5. Multi-Task Neural Network Backbone (MobileNetV3-Small)
+- **OpenCV DNN & PyTorch Dual Runtime**: Supports pure CPU execution via OpenCV DNN using ONNX weights (`<65MB` bundle with zero PyTorch overhead) alongside full PyTorch fallback.
+- **Head 1 (Denomination)**: Multi-class classification over Indian Rupee denominations.
+- **Head 2 (Counterfeit Risk)**: Binary counterfeit risk probability prediction.
 
-6. **Hardware Performance**:
-   - Benchmarked on 1080p frames at **~27–33 FPS** on standard laptop CPU (>15 FPS requirement exceeded).
+### 6. Super-Resolution CMYK Halftone Detector (`core/super_res_halftone.py`)
+- **2x ESPCN Super-Resolution**: Direct CPU neural magnification of micro-texture patches.
+- **CMYK Ink Decomposition**: Separates RGB into Cyan, Magenta, Yellow, and Key (Black) plates with dark-pixel stabilization.
+- **2D FFT Rosette Spectrum Analysis**: Detects periodic harmonic lattice peaks characteristic of 4-color process commercial printer screens (15°, 45°, 75°) vs. continuous-line intaglio engraving.
+
+### 7. Banknote Security Feature & Counterfeit Validator (`core/security_validator.py`)
+- **Multi-Scale Template Matching**: Targets known commercial novelty/toy banknote spoof markers:
+  - Header spoofing: `"CHILDREN BANK OF INDIA"` and `"भारतीय मनोरंजन बैंक"`.
+  - Watermark spoofing: `"FULL OF FUN"`.
+  - Security thread imitation: `"CHURAN LABEL"` printed bands.
+- **Resolution-Gated Search**: Strictly prevents template downscaling below legible text resolution (`sh >= 12`), eliminating false positives on authentic Reserve Bank of India typography.
+
+### 8. Discreet Acoustic Audio Feedback (`core/audio_feedback.py`)
+- Replaces noisy Text-to-Speech with subtle tactile acoustic rhythms:
+  - **₹10**: Single high pulse (880 Hz, 80ms)
+  - **₹20**: Double micro-pulse rhythm
+  - **₹50**: Melodic rising third
+  - **₹100**: Rising fifth chime
+  - **₹200**: Triple staccato pulse
+  - **₹500**: Resonant major triad chord
+  - **₹2000**: Quadruple ascending arpeggio
+  - **COUNTERFEIT / SUSPECT**: Urgent discordant dual-sawtooth alarm (180 Hz + 194 Hz)
 
 ---
 
@@ -74,22 +103,24 @@ A high-performance edge computer vision and forensic analysis platform engineere
 The Looker/
 ├── core/
 │   ├── __init__.py
-│   ├── model.py              # MultiTaskMobileNetV3 & joint loss
-│   ├── detector.py           # Banknote contour & centrality-weighted reticle localization
-│   ├── denomination_engine.py# Illumination-invariant chromaticity & centroid deduction
-│   ├── security_validator.py # Multi-scale toy counterfeit & marker verification
+│   ├── model.py              # MultiTaskMobileNetV3 neural architecture & joint loss
+│   ├── detector.py           # Banknote localization, Haar face suppression & quad fitting
+│   ├── denomination_engine.py# Circular-hue chromaticity & calibrated denomination deduction
+│   ├── security_validator.py # Multi-scale toy counterfeit marker verification
 │   ├── preprocessing.py      # LAB CLAHE & Screen-Flash Differencing
 │   ├── super_res_halftone.py # ESPCN Super-Resolution & CMYK FFT Dot Detector
 │   ├── audio_feedback.py     # NumPy acoustic waveform synthesizer & async engine
-│   └── pipeline.py           # Unified real-time inspection engine
+│   └── pipeline.py           # Unified real-time inspection engine with TemporalStabilizer
 ├── web/
-│   ├── app.py                # FastAPI ASGI backend (<25ms frame streaming)
-│   ├── templates/index.html  # Minimalist editorial UI with Synthetic Bench & Dual Lab
+│   ├── app.py                # FastAPI ASGI backend (<25ms frame streaming & comparison API)
+│   ├── templates/index.html  # Minimalist editorial UI with 4 forensic modes
 │   └── static/               # Styling (CSS), client streaming, and Web Audio API (JS)
 ├── data/
-│   └── counterfeit_templates/# Known toy fake note templates
+│   ├── counterfeit_templates/# Known toy fake note templates
+│   └── real_crops_50/        # Reference authentic banknote crops
 ├── models/
-│   └── currency_mobilenet_v3.pth # Trained multi-task neural network weights
+│   ├── currency_mobilenet_v3.onnx # Pure OpenCV DNN CPU model weights (<65MB)
+│   └── currency_mobilenet_v3.pth  # PyTorch model weights
 ├── utils/
 │   ├── __init__.py
 │   └── visualizer.py         # Real-time HUD, diagnostic panels, and gauges
@@ -101,10 +132,14 @@ The Looker/
 │   ├── test_audio.py         # Acoustic pulse & WAV byte header tests
 │   ├── test_live_deduction.py# Live banknote deduction & authenticity tests
 │   └── benchmark_fps.py      # End-to-end 1080p CPU FPS benchmark (>15 FPS)
+├── denomination_engine.py    # Standalone modular denomination deduction engine
+├── detector.py               # Standalone modular face-suppressed detector
+├── pipeline.py               # Standalone modular inspection pipeline
+├── synthetic_data.py         # Realistic banknote & cluttered camera scene synthesizer
 ├── train_currency_model.py   # Multi-scenario curriculum training script
-├── synthetic_data.py         # Algorithmic banknote generator (genuine, rosette & toy fakes)
 ├── run_web.py                # All-in-one autonomous web studio launcher
 ├── main.py                   # Real-time CLI & GUI application runner
+├── vercel.json               # Serverless deployment configuration
 └── README.md
 ```
 
@@ -112,38 +147,38 @@ The Looker/
 
 ## Execution Commands
 
-### 1. Launch Aesthetic Forensic Web Studio (Recommended)
+### 1. Launch Forensic Web Studio (Recommended)
 ```bash
 python run_web.py
 ```
 This single autonomous command automatically:
 - Checks and reclaims port 8000 from any orphaned processes.
-- Pre-warms the neural networks (MobileNetV3, 2x ESPCN Super-Resolution, CLAHE, CMYK FFT).
+- Pre-warms the neural networks (MobileNetV3 ONNX, 2x ESPCN Super-Resolution, CLAHE, CMYK FFT).
 - Launches the high-speed ASGI server (<25ms frame latency).
-- Automatically pops open your default web browser directly to **`http://127.0.0.1:8000`**.
+- Automatically opens your default web browser directly to **`http://127.0.0.1:8000`**.
 
-### 2. Run Complete Automated Test Suite (15 Tests)
+### 2. Run Automated Test Suite
 ```bash
 python -m unittest discover tests
 ```
 
-### 2. Run 1080p CPU FPS Throughput Benchmark
+### 3. Run 1080p CPU FPS Throughput Benchmark
 ```bash
 python tests/benchmark_fps.py
 ```
 
-### 3. Run Live Interactive Simulation Mode
+### 4. Run Live Interactive Simulation Mode
 Cycles between genuine and counterfeit banknotes with interactive HUD and acoustic feedback:
 ```bash
 python main.py --demo
 ```
 
-### 4. Run with Physical Webcam
+### 5. Run with Physical Webcam
 ```bash
 python main.py --camera 0
 ```
 
-### 5. Inspect a Static Note Image
+### 6. Inspect a Static Note Image
 ```bash
 python main.py --image output/genuine_note_500.png
 python main.py --image output/counterfeit_note_500.png
@@ -159,4 +194,3 @@ python main.py --image output/counterfeit_note_500.png
 | `[M]` | Mute / unmute discreet audio rhythms |
 | `[S]` | Save diagnostic inspection snapshot to disk |
 | `[Q]` / `[ESC]` | Quit application |
-
