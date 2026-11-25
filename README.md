@@ -137,9 +137,19 @@ The Looker/
 ├── train_currency_model.py   # Multi-scenario curriculum training script
 ├── run_web.py                # All-in-one autonomous web studio launcher
 ├── main.py                   # Real-time CLI & GUI application runner
-├── vercel.json               # Serverless deployment configuration
+├── render.yaml               # Render Blueprint deployment configuration
+├── Procfile                  # Render / WSGI-ASGI process entrypoint
 └── README.md
 ```
+
+---
+
+## Deployment on Render
+
+This repository includes `render.yaml` and `Procfile` for 1-click deployment on [Render](https://render.com):
+- **Build Command**: `pip install -r requirements.txt`
+- **Start Command**: `uvicorn web.app:app --host 0.0.0.0 --port $PORT`
+- **Python Version**: `3.11.9` (pinned in `render.yaml` for prebuilt `numpy` and `opencv-python-headless` wheels)
 
 ---
 
