@@ -4,7 +4,6 @@ web/app.py - FastAPI Application Server for The Looker Forensic Web Studio.
 Zero-dependency native endpoints:
 - GET /                    : Serves interactive minimalist frontend
 - POST /api/inspect/image  : Inspects uploaded photo (binary or JSON base64)
-- POST /api/inspect/video  : Analyzes uploaded video across timeline
 - POST /api/generate-demo  : Generates synthetic genuine/counterfeit sample (JSON)
 - POST /api/flash-diff     : Computes watermark delta from ambient + flash pair (JSON)
 - WebSocket /ws/live       : Real-time low-latency video stream for webcam
@@ -249,81 +248,6 @@ async def inspect_uploaded_image(request: Request):
     serialized["filename"] = filename
     serialized["resolution"] = f"{frame.shape[1]}x{frame.shape[0]}"
     return JSONResponse(serialized)
-
-
-@app.post("/api/inspect/video")
-async def inspect_uploaded_video(request: Request):
-    """Analyze an uploaded video file by sampling keyframes across timeline."""
-    filename = request.headers.get("x-filename", "uploaded_video.mp4")
-    body = await request.body()
-
-    suffix = os.path.splitext(filename)[1] or ".mp4"
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-        tmp.write(body)
-        tmp_path = tmp.name
-
-    try:
-        cap = cv2.VideoCapture(tmp_path)
-        if not cap.isOpened():
-            return JSONResponse({"error": "Failed to decode video stream"}, status_code=400)
-
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        video_fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-        duration_sec = total_frames / max(1.0, video_fps)
-
-        # Sample up to 12 representative frames evenly spaced
-        sample_count = min(12, max(3, total_frames // 10))
-        indices = np.linspace(0, total_frames - 1, sample_count, dtype=int)
-
-        timeline = []
-        scores = []
-        denoms = {}
-
-        pipe = get_pipeline()
-        for idx in indices:
-            cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
-            ret, frame = cap.read()
-            if not ret or frame is None:
-                continue
-
-            res = pipe.process_frame(frame)
-            score = float(res["composite_counterfeit_score"])
-            scores.append(score)
-
-            d = res["denomination"]
-            if d != "Background":
-                denoms[d] = denoms.get(d, 0) + 1
-
-            timeline.append({
-                "time_sec": round(float(idx / video_fps), 2),
-                "frame_idx": int(idx),
-                "denomination": d,
-                "confidence": round(float(res["confidence"]), 3),
-                "counterfeit_score": round(score, 3),
-                "verdict": res["verdict"],
-                "thumbnail": image_to_base64(cv2.resize(frame, (160, 90)))
-            })
-
-        cap.release()
-
-        avg_score = float(np.mean(scores)) if scores else 0.0
-        primary_denom = max(denoms, key=denoms.get) if denoms else "Undetermined"
-        overall_counterfeit = avg_score >= pipe.counterfeit_threshold
-
-        return JSONResponse({
-            "filename": filename,
-            "total_frames": total_frames,
-            "duration_sec": round(duration_sec, 2),
-            "video_fps": round(video_fps, 1),
-            "primary_denomination": primary_denom,
-            "average_counterfeit_score": round(avg_score, 3),
-            "verdict": "SUSPECT / COUNTERFEIT" if overall_counterfeit else "GENUINE",
-            "is_counterfeit": overall_counterfeit,
-            "timeline": timeline
-        })
-    finally:
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
 
 
 @app.post("/api/generate-demo")

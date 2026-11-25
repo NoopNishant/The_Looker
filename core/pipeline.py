@@ -2,19 +2,23 @@
 core/pipeline.py - Unified Real-Time Currency Recognition & Counterfeit Detection Engine.
 
 Integrates:
-- BanknoteDetector for real-time automatic banknote contour localization in live video.
+- BanknoteDetector for real-time automatic banknote contour localization in live video
+  (now returns a perspective-rectified note crop and its measured aspect ratio).
 - DenominationDeductionEngine for multi-cue optical & deep feature denomination deduction.
 - MultiTaskMobileNetV3 for deep semantic classification and counterfeit probability.
 - CLAHE for optical topology enhancement.
 - ScreenFlashDifferencing for active optical transmission inspection.
 - ESPCN SuperResolution + HalftoneDotDetector for micro-texture CMYK dot discrimination.
 - DiscreetAudioEngine for non-visual acoustic feedback.
+- TemporalStabilizer (opt-in via process_frame(..., live=True)) that votes the denomination over
+  recent frames and adds hysteresis to the counterfeit verdict, so a live feed does not flicker.
 """
 
-from typing import Dict, Optional, Tuple, Union
 import os
 import time
+from collections import deque
 from typing import Dict, List, Optional, Tuple, Union
+
 import numpy as np
 import cv2
 
@@ -38,11 +42,105 @@ from .denomination_engine import DenominationDeductionEngine
 from .security_validator import BanknoteSecurityValidator
 
 
+class TemporalStabilizer:
+    """
+    Frame-to-frame stabiliser for live video.
+
+    * Denomination: recency-weighted, confidence-weighted vote over the last `window` frames.
+      The incumbent is only replaced when a challenger's vote beats it by `switch_ratio`.
+    * Counterfeit flag: EMA of the per-frame boolean with on/off hysteresis. A hard marker hit
+      (known toy-note text) latches immediately.
+    * A note that disappears for more than `miss_tolerance` frames resets all state.
+    """
+
+    def __init__(
+        self,
+        window: int = 8,
+        switch_ratio: float = 1.25,
+        miss_tolerance: int = 4,
+        flag_alpha: float = 0.5,
+        flag_on: float = 0.6,
+        flag_off: float = 0.3,
+    ) -> None:
+        self.window = window
+        self.switch_ratio = switch_ratio
+        self.miss_tolerance = miss_tolerance
+        self.flag_alpha = flag_alpha
+        self.flag_on = flag_on
+        self.flag_off = flag_off
+        self.reset()
+
+    def reset(self) -> None:
+        self.history: deque = deque(maxlen=self.window)
+        self.stable_denom: Optional[str] = None
+        self.stable_frames: int = 0
+        self.flag_ema: float = 0.0
+        self.cf_state: bool = False
+        self.last_reason: str = ""
+        self.misses: int = 0
+
+    def miss(self) -> None:
+        self.misses += 1
+        if self.misses > self.miss_tolerance:
+            self.reset()
+
+    def update(
+        self,
+        denom: str,
+        conf: float,
+        cf_flag: bool,
+        hard_cf: bool = False,
+        reason: str = ""
+    ) -> Dict[str, Union[str, float, bool, int]]:
+        self.misses = 0
+        self.history.append((denom, max(float(conf), 0.05)))
+        n = len(self.history)
+
+        totals: Dict[str, float] = {}
+        for i, (d, c) in enumerate(self.history):
+            totals[d] = totals.get(d, 0.0) + c * (0.6 + 0.4 * (i + 1) / n)
+        leader = max(totals, key=totals.get)
+
+        if self.stable_denom is None or self.stable_denom not in totals:
+            self.stable_denom, self.stable_frames = leader, 1
+        elif leader == self.stable_denom:
+            self.stable_frames += 1
+        elif totals[leader] >= self.switch_ratio * totals[self.stable_denom]:
+            self.stable_denom, self.stable_frames = leader, 1
+        else:
+            self.stable_frames += 1  # incumbent holds
+
+        agree = [c for d, c in self.history if d == self.stable_denom]
+        share = totals[self.stable_denom] / max(1e-9, sum(totals.values()))
+        conf_out = float(np.clip(np.mean(agree) * (0.6 + 0.4 * share), 0.0, 0.99))
+
+        if hard_cf:
+            self.cf_state = True
+            self.flag_ema = 1.0
+        else:
+            self.flag_ema = self.flag_alpha * float(cf_flag) + (1.0 - self.flag_alpha) * self.flag_ema
+            if self.cf_state and self.flag_ema <= self.flag_off:
+                self.cf_state = False
+            elif (not self.cf_state) and self.flag_ema >= self.flag_on:
+                self.cf_state = True
+        if cf_flag and reason:
+            self.last_reason = reason
+
+        return {
+            "denomination": self.stable_denom,
+            "confidence": conf_out,
+            "is_counterfeit": self.cf_state,
+            "stable_frames": self.stable_frames,
+        }
+
+
 class CurrencyInspectionPipeline:
     """
     End-to-end CPU-optimized currency recognition and multi-layer counterfeit detection pipeline.
     Supports ultra-lightweight OpenCV DNN runtime (<65MB bundle) with seamless PyTorch fallback.
     """
+
+    BACKGROUND_GATE = 0.35
 
     def __init__(
         self,
@@ -50,11 +148,13 @@ class CurrencyInspectionPipeline:
         device: str = "cpu",
         enable_audio: bool = True,
         counterfeit_threshold: float = 0.50,
-        roi_size: int = 96
+        roi_size: int = 96,
+        tta: bool = False
     ) -> None:
         self.device = torch.device(device) if (TORCH_AVAILABLE and torch) else "cpu"
         self.counterfeit_threshold = counterfeit_threshold
         self.roi_size = roi_size
+        self.tta = tta  # average CNN output over the image and its mirror (2x CNN cost)
 
         # 1. Initialize Banknote Detector (Contour & Boundary Segmentation)
         self.detector = BanknoteDetector()
@@ -63,6 +163,8 @@ class CurrencyInspectionPipeline:
         self.denom_engine = DenominationDeductionEngine()
 
         # 3. Check for ONNX model first (pure OpenCV DNN runtime, zero PyTorch overhead)
+        # NOTE: if an ONNX file exists it takes precedence over the .pth weights. After retraining,
+        # make sure the ONNX is re-exported (train_currency_model.py now does this automatically).
         onnx_candidates = [
             "models/currency_mobilenet_v3.onnx",
             os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "models", "currency_mobilenet_v3.onnx")
@@ -131,10 +233,53 @@ class CurrencyInspectionPipeline:
         # 6. Discreet Audio Engine
         self.audio_engine = DiscreetAudioEngine(debounce_interval_sec=1.5, enabled=enable_audio)
 
+        # 7. Temporal stabiliser (used only when process_frame(..., live=True))
+        self.stabilizer = TemporalStabilizer()
+
         # Performance telemetry
         self.fps_rolling: float = 0.0
         self.frame_count: int = 0
         self.prev_time: float = time.time()
+
+    # ------------------------------------------------------------------ #
+    # Helpers
+    # ------------------------------------------------------------------ #
+    @staticmethod
+    def _to_preview(img: np.ndarray, max_h: int = 360, max_w: int = 640) -> np.ndarray:
+        """Downscale (never upscale) so the image fits within max_w x max_h, keeping aspect ratio."""
+        nh, nw = img.shape[:2]
+        scale = min(1.0, max_h / float(max(1, nh)), max_w / float(max(1, nw)))
+        if scale >= 1.0:
+            return img
+        return cv2.resize(img, (max(1, int(nw * scale)), max(1, int(nh * scale))), interpolation=cv2.INTER_AREA)
+
+    def _cnn_once(self, bgr_img: np.ndarray) -> Tuple[Optional[Dict[str, float]], float]:
+        if self.use_onnx and self.dnn_model is not None:
+            out = self.dnn_model.predict(bgr_img)
+            return out["probs"], float(out["counterfeit_prob"])
+        if self.model is not None and TORCH_AVAILABLE and self.tensor_transform is not None:
+            rgb = cv2.cvtColor(bgr_img, cv2.COLOR_BGR2RGB)
+            tensor_in = self.tensor_transform(rgb).unsqueeze(0).to(self.device)
+            with torch.inference_mode():
+                nn_output = self.model.forward(tensor_in)
+                probs = torch.softmax(nn_output["denomination_logits"][0], dim=-1)
+                probs_dict = {
+                    self.model.denominations[i]: probs[i].item()
+                    for i in range(min(len(self.model.denominations), probs.shape[0]))
+                }
+                return probs_dict, float(nn_output["counterfeit_prob"][0].item())
+        return None, 0.0
+
+    def _run_cnn(self, bgr_img: np.ndarray) -> Tuple[Optional[Dict[str, float]], float]:
+        """Run the CNN (ONNX or PyTorch), optionally averaged with its mirror image (TTA)."""
+        probs, cf = self._cnn_once(bgr_img)
+        if probs is None or not self.tta:
+            return probs, cf
+        probs_f, cf_f = self._cnn_once(cv2.flip(bgr_img, 1))
+        if probs_f is None:
+            return probs, cf
+        merged = {k: 0.5 * (probs[k] + probs_f.get(k, probs[k])) for k in probs}
+        return merged, 0.5 * (cf + cf_f)
 
     def extract_central_roi(self, frame: np.ndarray) -> Tuple[np.ndarray, Tuple[int, int, int, int]]:
         """
@@ -153,21 +298,28 @@ class CurrencyInspectionPipeline:
         roi = frame[y1:y2, x1:x2].copy()
         return roi, (x1, y1, x2, y2)
 
+    # ------------------------------------------------------------------ #
+    # Main entry point
+    # ------------------------------------------------------------------ #
     def process_frame(
         self,
         bgr_frame: np.ndarray,
         cached_flash_delta: Optional[Dict[str, np.ndarray]] = None,
         roi_bbox: Optional[Tuple[int, int, int, int]] = None,
-        is_pre_cropped: bool = False
+        is_pre_cropped: bool = False,
+        live: bool = False
     ) -> Dict[str, Union[str, float, bool, np.ndarray, Dict]]:
         """
         Execute full inspection pass on incoming camera frame.
-        
+
         Args:
             bgr_frame: Raw 1080p or preview BGR frame.
             cached_flash_delta: Optional pre-computed screen-flash difference result.
             roi_bbox: Optional custom ROI coordinates (x1, y1, x2, y2).
             is_pre_cropped: If True, treats frame as pre-cropped banknote image.
+            live: Set True from the continuous camera loop / WebSocket stream to enable temporal
+                  voting + verdict hysteresis. Leave False for single images (uploads, tests),
+                  where state from a previous, unrelated image must not leak in.
         Returns:
             Comprehensive diagnostic dictionary.
         """
@@ -175,7 +327,9 @@ class CurrencyInspectionPipeline:
 
         h, w = bgr_frame.shape[:2]
 
-        # Step 0: Auto-Detect Banknote in Live Feed
+        # Step 0: Auto-Detect Banknote (stateless for single photos, smoothed for live video)
+        if not live:
+            self.detector.reset()
         detection = self.detector.detect(bgr_frame, is_pre_cropped=is_pre_cropped)
         is_note_detected = detection["detected"]
         detected_bbox = detection["bbox"]
@@ -190,37 +344,12 @@ class CurrencyInspectionPipeline:
             roi, _ = self.extract_central_roi(note_crop)
 
         # Step 2: Optical CLAHE Contrast Enhancement
-        nh, nw = note_crop.shape[:2]
-        if nh > 360 or nw > 640:
-            scale_preview = 360.0 / nh
-            preview_w = int(nw * scale_preview)
-            preview_frame = cv2.resize(note_crop, (preview_w, 360), interpolation=cv2.INTER_AREA)
-        else:
-            preview_frame = note_crop
-
+        preview_frame = self._to_preview(note_crop)
         clahe_bgr = self.clahe_enhancer.enhance_bgr(preview_frame)
         topological_grad = self.clahe_enhancer.extract_topological_gradients(preview_frame)
 
         # Step 3: Multi-Task CNN Inference (OpenCV DNN or PyTorch)
-        cnn_probs_dict = None
-        counterfeit_cnn_prob = 0.0
-
-        if self.use_onnx and self.dnn_model is not None:
-            nn_out = self.dnn_model.predict(preview_frame)
-            cnn_probs_dict = nn_out["probs"]
-            counterfeit_cnn_prob = nn_out["counterfeit_prob"]
-        elif self.model is not None and TORCH_AVAILABLE and self.tensor_transform is not None:
-            rgb_for_nn = cv2.cvtColor(preview_frame, cv2.COLOR_BGR2RGB)
-            tensor_in = self.tensor_transform(rgb_for_nn).unsqueeze(0).to(self.device)
-            with torch.inference_mode():
-                nn_output = self.model.forward(tensor_in)
-                denom_logits = nn_output["denomination_logits"][0]
-                counterfeit_cnn_prob = nn_output["counterfeit_prob"][0].item()
-                probs = torch.softmax(denom_logits, dim=-1)
-                cnn_probs_dict = {
-                    self.model.denominations[i]: probs[i].item()
-                    for i in range(min(len(self.model.denominations), probs.shape[0]))
-                }
+        cnn_probs_dict, counterfeit_cnn_prob = self._run_cnn(preview_frame)
 
         # Step 4: Calibrated Multi-Cue Denomination Deduction
         ar_valid = bool(detection.get("aspect_ratio_valid", detection.get("strategy") == "contour_quad"))
@@ -230,60 +359,47 @@ class CurrencyInspectionPipeline:
         is_currency = deduction["is_valid_currency"]
         note_name = deduction.get("note_name", denomination)
 
-        # Strict Background Gate with Guided Reticle Fallback:
+        # Strict Background Gate with Guided Reticle & Full-Frame Fallbacks:
         bg_prob = cnn_probs_dict.get("Background", 0.0) if cnn_probs_dict else 0.0
-        if bg_prob >= 0.35:
-            # If a false contour was picked up (e.g. clothing), check the central guided reticle
-            if detection.get("strategy") == "contour_quad" and "default_crop" in detection:
-                reticle_crop = detection["default_crop"]
-                if reticle_crop is not None and reticle_crop.size > 0:
-                    r_h, r_w = reticle_crop.shape[:2]
-                    if r_h > 360 or r_w > 640:
-                        s_r = 360.0 / r_h
-                        r_prev = cv2.resize(reticle_crop, (int(r_w * s_r), 360), interpolation=cv2.INTER_AREA)
-                    else:
-                        r_prev = reticle_crop
+        if bg_prob >= self.BACKGROUND_GATE:
+            # 1) If a false contour was picked up, check the central guided reticle
+            # 2) If guided_reticle cropped too tightly into a pre-cropped banknote, check full frame
+            fallback_candidates = []
+            reticle_crop = detection.get("default_crop")
+            if (
+                detection.get("strategy") in ("contour_quad", "track_hold")
+                and reticle_crop is not None and reticle_crop.size > 0
+            ):
+                fallback_candidates.append((reticle_crop, detection.get("default_bbox", (0, 0, w, h)), False))
+            if not is_pre_cropped and detection.get("strategy") in ("guided_reticle", "contour_quad"):
+                frame_ar = max(w, h) / max(1.0, min(w, h))
+                if 1.65 <= frame_ar <= 2.75:
+                    fallback_candidates.append((bgr_frame, (0, 0, w, h), True))
 
-                    cnn_probs_r = None
-                    cf_cnn_r = 0.0
-                    if self.use_onnx and self.dnn_model is not None:
-                        nn_out_r = self.dnn_model.predict(r_prev)
-                        cnn_probs_r = nn_out_r["probs"]
-                        cf_cnn_r = nn_out_r["counterfeit_prob"]
-                    elif self.model is not None and TORCH_AVAILABLE and self.tensor_transform is not None:
-                        rgb_r = cv2.cvtColor(r_prev, cv2.COLOR_BGR2RGB)
-                        t_r = self.tensor_transform(rgb_r).unsqueeze(0).to(self.device)
-                        with torch.inference_mode():
-                            nn_out_r = self.model.forward(t_r)
-                            probs_r = torch.softmax(nn_out_r["denomination_logits"][0], dim=-1)
-                            cnn_probs_r = {
-                                self.model.denominations[i]: probs_r[i].item()
-                                for i in range(min(len(self.model.denominations), probs_r.shape[0]))
-                            }
-                            cf_cnn_r = nn_out_r["counterfeit_prob"][0].item()
+            for fb_crop, fb_bbox, fb_ar_valid in fallback_candidates:
+                cnn_probs_r, cf_cnn_r = self._run_cnn(self._to_preview(fb_crop))
+                if cnn_probs_r and cnn_probs_r.get("Background", 0.0) < self.BACKGROUND_GATE:
+                    note_crop = fb_crop
+                    is_note_detected = True
+                    detected_bbox = fb_bbox
+                    corners = [
+                        [fb_bbox[0], fb_bbox[1]],
+                        [fb_bbox[0] + fb_bbox[2], fb_bbox[1]],
+                        [fb_bbox[0] + fb_bbox[2], fb_bbox[1] + fb_bbox[3]],
+                        [fb_bbox[0], fb_bbox[1] + fb_bbox[3]]
+                    ]
+                    cnn_probs_dict = cnn_probs_r
+                    counterfeit_cnn_prob = float(cf_cnn_r)
+                    deduction = self.denom_engine.deduce_denomination(note_crop, cnn_probs=cnn_probs_dict, aspect_ratio_valid=fb_ar_valid)
+                    denomination = deduction["denomination"]
+                    confidence = deduction["confidence"]
+                    is_currency = deduction["is_valid_currency"]
+                    note_name = deduction.get("note_name", denomination)
+                    bg_prob = cnn_probs_r.get("Background", 0.0)
+                    roi, _ = self.extract_central_roi(note_crop)
+                    break
 
-                    if cnn_probs_r and cnn_probs_r.get("Background", 0.0) < 0.35:
-                        note_crop = reticle_crop
-                        is_note_detected = True
-                        def_bbox = detection.get("default_bbox", (0, 0, w, h))
-                        detected_bbox = def_bbox
-                        corners = [
-                            [def_bbox[0], def_bbox[1]],
-                            [def_bbox[0] + def_bbox[2], def_bbox[1]],
-                            [def_bbox[0] + def_bbox[2], def_bbox[1] + def_bbox[3]],
-                            [def_bbox[0], def_bbox[1] + def_bbox[3]]
-                        ]
-                        cnn_probs_dict = cnn_probs_r
-                        counterfeit_cnn_prob = float(cf_cnn_r) if isinstance(cf_cnn_r, (int, float)) else cf_cnn_r[0].item()
-                        deduction = self.denom_engine.deduce_denomination(note_crop, cnn_probs=cnn_probs_dict, aspect_ratio_valid=False)
-                        denomination = deduction["denomination"]
-                        confidence = deduction["confidence"]
-                        is_currency = deduction["is_valid_currency"]
-                        note_name = deduction.get("note_name", denomination)
-                        bg_prob = cnn_probs_r.get("Background", 0.0)
-                        roi, _ = self.extract_central_roi(note_crop)
-
-        if bg_prob >= 0.35:
+        if bg_prob >= self.BACKGROUND_GATE:
             is_currency = False
             denomination = "Background"
             note_name = "No Currency in View"
@@ -319,7 +435,12 @@ class CurrencyInspectionPipeline:
             )
 
         # Determine Verdict & Detailed Reason
-        if not is_note_detected or not is_currency or denomination == "Background":
+        note_valid = bool(is_note_detected and is_currency and denomination != "Background")
+        stable_frames = 0
+
+        if not note_valid:
+            if live:
+                self.stabilizer.miss()
             is_note_detected = False
             verdict = "AWAITING CURRENCY NOTE"
             is_counterfeit = False
@@ -330,26 +451,48 @@ class CurrencyInspectionPipeline:
             composite_counterfeit_score = 0.0
             halftone_score = 0.0
             counterfeit_cnn_prob = 0.0
-        elif is_toy_counterfeit:
-            verdict = "SUSPECT / COUNTERFEIT"
-            is_counterfeit = True
-            authenticity_reason = f"Counterfeit Marker Detected ({flagged_marker})"
-        elif is_halftone:
-            verdict = "SUSPECT / COUNTERFEIT"
-            is_counterfeit = True
-            authenticity_reason = "CMYK Halftone Printer Rosettes Detected (Dither Dots)"
-        elif composite_counterfeit_score >= self.counterfeit_threshold:
-            verdict = "SUSPECT / COUNTERFEIT"
-            is_counterfeit = True
-            authenticity_reason = "Unnatural Surface Relief & Optical Spectrum Mismatch"
         else:
-            verdict = "GENUINE"
-            is_counterfeit = False
-            authenticity_reason = "Authentic Continuous-Line Intaglio Engraving Verified"
+            raw_flag = False
+            hard_flag = False
+            raw_reason = ""
+            if is_toy_counterfeit:
+                raw_flag = hard_flag = True
+                raw_reason = f"Counterfeit Marker Detected ({flagged_marker})"
+            elif is_halftone:
+                raw_flag = True
+                raw_reason = "CMYK Halftone Printer Rosettes Detected (Dither Dots)"
+            elif composite_counterfeit_score >= self.counterfeit_threshold:
+                raw_flag = True
+                raw_reason = "Unnatural Surface Relief & Optical Spectrum Mismatch"
+
+            if live:
+                st = self.stabilizer.update(denomination, confidence, raw_flag, hard_flag, raw_reason)
+                denomination = str(st["denomination"])
+                confidence = float(st["confidence"])
+                is_counterfeit = bool(st["is_counterfeit"])
+                stable_frames = int(st["stable_frames"])
+                note_name = self.denom_engine.PROFILES.get(denomination, {}).get("name", denomination)
+                authenticity_reason = raw_reason or self.stabilizer.last_reason
+            else:
+                self.stabilizer.reset()
+                is_counterfeit = raw_flag
+                authenticity_reason = raw_reason
+
+            if is_counterfeit:
+                verdict = "SUSPECT / COUNTERFEIT"
+                if not authenticity_reason:
+                    authenticity_reason = "Unnatural Surface Relief & Optical Spectrum Mismatch"
+            else:
+                verdict = "GENUINE"
+                authenticity_reason = "Authentic Continuous-Line Intaglio Engraving Verified"
 
         # Step 7: Discreet Audio Feedback Trigger
+        # (in live mode, wait for a stable read so a one-frame mis-read never beeps the wrong note)
         audio_played = False
-        if is_currency and denomination != "Background" and confidence >= 0.45:
+        if (
+            note_valid and denomination != "Background" and confidence >= 0.45
+            and (not live or stable_frames >= 3)
+        ):
             audio_played = self.audio_engine.trigger_feedback(
                 denomination=denomination,
                 is_counterfeit=is_counterfeit
@@ -366,12 +509,17 @@ class CurrencyInspectionPipeline:
             "denomination": denomination,
             "note_name": note_name,
             "confidence": confidence,
+            "denomination_uncertain": bool(note_valid and (confidence < 0.30 or deduction.get("ambiguous", False))),
+            "denomination_scores": deduction.get("scores", {}),
             "counterfeit_cnn_prob": counterfeit_cnn_prob,
             "halftone_score": halftone_score,
             "composite_counterfeit_score": composite_counterfeit_score,
             "is_counterfeit": is_counterfeit,
             "verdict": verdict,
             "authenticity_reason": authenticity_reason,
+            "stable_frames": stable_frames,
+            "detection_strategy": detection.get("strategy", ""),
+            "aspect_ratio": float(detection.get("measured_aspect_ratio", 0.0)),
             "fps": self.fps_rolling,
             "latency_ms": t_elapsed * 1000.0,
             "roi_bbox": detected_bbox if is_note_detected else (w//4, h//4, w//2, h//2),

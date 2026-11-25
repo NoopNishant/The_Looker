@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>The Looker — Currency Forensics & Counterfeit Guard</title>
   
-  <link rel="stylesheet" href="/static/css/style.css?v=2.2">
+  <link rel="stylesheet" href="/static/css/style.css?v=2.3">
   
   <!-- Lucide Icons -->
   <script src="https://unpkg.com/lucide@latest"></script>
@@ -51,10 +51,6 @@
           <i data-lucide="image" style="width: 16px; height: 16px;"></i>
           Photo Forensics
         </button>
-        <button class="tab-btn" data-mode="video">
-          <i data-lucide="film" style="width: 16px; height: 16px;"></i>
-          Video Stream
-        </button>
         <button class="tab-btn" data-mode="compare">
           <i data-lucide="columns-2" style="width: 16px; height: 16px;"></i>
           Side-by-Side Lab
@@ -92,16 +88,13 @@
           <!-- Uploaded Photo View -->
           <img id="uploaded-image-preview" alt="Uploaded Banknote" style="display:none;" />
 
-          <!-- Uploaded Video View -->
-          <video id="uploaded-video" controls playsinline style="display:none;"></video>
-
           <!-- Upload Dropzone Target -->
           <div id="dropzone-box" class="dropzone-overlay" style="display:none;">
             <div class="dropzone-icon">
               <i data-lucide="file-up" style="width: 24px; height: 24px;"></i>
             </div>
-            <div class="dropzone-text">Drop banknote photo or video here</div>
-            <div class="dropzone-subtext">Supports high-res PNG, JPG, WEBP, MP4, MOV</div>
+            <div class="dropzone-text">Drop banknote photo here</div>
+            <div class="dropzone-subtext">Supports high-res PNG, JPG, WEBP</div>
           </div>
         </div>
 
@@ -361,19 +354,6 @@
       </div>
     </section>
 
-    <!-- Video Temporal Timeline Inspection Section -->
-    <section class="timeline-card" id="video-timeline-section">
-      <div class="plates-section-header">
-        <div>
-          <div class="plates-title">Temporal Video Inspection Timeline</div>
-          <div class="plates-subtitle" id="timeline-stats-text">Analyzing frame keyframes across video duration</div>
-        </div>
-      </div>
-      <div class="timeline-scroller" id="timeline-container">
-        <!-- Keyframe nodes injected dynamically -->
-      </div>
-    </section>
-
     <!-- Multi-Spectral Forensic Plates Drawer -->
     <section class="plates-section" id="plates-section">
       <div class="plates-section-header">
@@ -459,11 +439,10 @@
   <!-- Hidden File Pickers -->
   <input type="file" id="file-photo-input" accept="image/png, image/jpeg, image/webp" style="display:none;" />
   <input type="file" id="file-compare-input" accept="image/png, image/jpeg, image/webp" style="display:none;" />
-  <input type="file" id="file-video-input" accept="video/mp4, video/webm, video/quicktime" style="display:none;" />
 
   <!-- Scripts -->
-  <script src="/static/js/audio.js?v=2.2"></script>
-  <script src="/static/js/app.js?v=2.2"></script>
+  <script src="/static/js/audio.js?v=2.3"></script>
+  <script src="/static/js/app.js?v=2.3"></script>
 </body>
 </html>
 

@@ -10,7 +10,7 @@ A high-performance edge computer vision and forensic analysis platform engineere
   - **Genuine Verdict**: Soft sage / pistachio (`#4E7259`, background `#EBF2ED`)
   - **Counterfeit / Suspect**: Muted terracotta / dusty coral (`#B84A4A`, background `#FDF0EE`)
   - **Telemetry & Focus**: Warm amber sand (`#A58266`, background `#F7F1EB`)
-- **4 Dedicated Forensic Operational Modes**:
+- **3 Dedicated Forensic Operational Modes**:
   1. **Live Camera**:
      - High-speed WebSocket (`/ws/live`) and binary HTTP (`/api/live-frame`) streaming delivering real-time bounding quads, central reticles, and risk metrics at **>25–35 FPS**.
      - Face & skin suppression to actively eliminate user hands and faces from triggering false banknote detections.
@@ -19,9 +19,7 @@ A high-performance edge computer vision and forensic analysis platform engineere
   2. **Photo Forensics**:
      - Instant drag-and-drop or file upload for high-resolution images (PNG, JPG, WEBP).
      - Generates all 6 multi-spectral micro-texture inspection plates (CLAHE micro-relief, 2x ESPCN neural super-res, 2D FFT rosette spectrum, Cyan & Magenta ink separations, and watermark mask).
-  3. **Video Stream**:
-     - Multi-keyframe timeline decomposition (MP4, MOV, WEBM) showing per-frame verdicts, thumbnail strips, and average counterfeit risk.
-  4. **Side-by-Side Dual Comparison Lab**:
+  3. **Side-by-Side Dual Comparison Lab**:
      - **Bidirectional Comparative Analysis**:
        - **When a Genuine Note is Detected**: Places the user's note on the left (`YOUR NOTE: VERIFIED GENUINE`) and contrasts it against a synthetic counterfeit reference on the right, providing an educational discrepancy breakdown (*Continuous intaglio lathe relief, absence of 4-color process dithering, authentic RBI typography* vs. *flat relief and halftone rosettes*).
        - **When a Counterfeit / Suspect Note is Detected**: Places the user's note on the left (`YOUR NOTE: SUSPECT / COUNTERFEIT`) and pairs it against an authentic RBI reference on the right, explaining the detected fraud markers (*e.g., Children Bank / Manoranjan Bank, commercial dithering*) vs. authentic Reserve Bank of India security standards.

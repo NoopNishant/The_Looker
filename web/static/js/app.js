@@ -6,7 +6,7 @@
  *    - WebSocket (/ws/live) primary
  *    - High-speed HTTP Binary POST (/api/live-frame) seamless fallback with in-flight flow control (~30-40 FPS).
  * 2. Dynamic banknote bounding reticle with live emerald/coral status tracking.
- * 3. Photo & Video upload pipelines with deep multi-spectral plate rendering.
+ * 3. Photo upload pipeline with deep multi-spectral plate rendering.
  * 4. Active screen-flash watermark acquisition.
  * 5. Synthetic Demonstration Bench with Side-by-Side Dual Comparative Analysis.
  * 6. Discreet Acoustic Rhythm Audio Feedback via Web Audio API.
@@ -19,7 +19,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // State
-  let currentMode = 'live'; // 'live', 'photo', 'video', 'compare'
+  let currentMode = 'live'; // 'live', 'photo', 'compare'
   let lastUploadedImageBase64 = null;
   let ws = null;
   let webcamStream = null;
@@ -35,13 +35,11 @@ document.addEventListener('DOMContentLoaded', () => {
   const canvasEl = document.getElementById('viewport-canvas');
   const ctx = canvasEl.getContext('2d');
   const photoPreview = document.getElementById('uploaded-image-preview');
-  const videoPreview = document.getElementById('uploaded-video');
   const dropzoneBox = document.getElementById('dropzone-box');
   const flashOverlay = document.getElementById('screen-flash-overlay');
 
   const filePhotoInput = document.getElementById('file-photo-input');
   const fileCompareInput = document.getElementById('file-compare-input');
-  const fileVideoInput = document.getElementById('file-video-input');
   const btnUploadTrigger = document.getElementById('btn-upload-trigger');
   const btnCompareUpload = document.getElementById('btn-compare-upload');
   const btnCamSwitch = document.getElementById('btn-cam-switch');
@@ -115,10 +113,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const cmpSusSr = document.getElementById('cmp-sus-sr');
   const cmpSusFft = document.getElementById('cmp-sus-fft');
 
-  const timelineCard = document.getElementById('video-timeline-section');
-  const timelineContainer = document.getElementById('timeline-container');
-  const timelineStats = document.getElementById('timeline-stats-text');
-
   // Off-screen canvas for frame resizing and transmission (480x270 @ 16:9)
   const transmitCanvas = document.createElement('canvas');
   const transmitCtx = transmitCanvas.getContext('2d');
@@ -145,11 +139,9 @@ document.addEventListener('DOMContentLoaded', () => {
     videoEl.style.display = 'none';
     canvasEl.style.display = 'none';
     photoPreview.style.display = 'none';
-    videoPreview.style.display = 'none';
     dropzoneBox.style.display = 'none';
     if (sideBySideBar) sideBySideBar.style.display = 'none';
     if (comparisonSection) comparisonSection.style.display = 'none';
-    timelineCard.classList.remove('active');
     btnCamSwitch.style.display = 'none';
     btnUploadTrigger.style.display = 'none';
 
@@ -170,11 +162,6 @@ document.addEventListener('DOMContentLoaded', () => {
       }
       btnUploadTrigger.style.display = 'inline-flex';
       btnUploadTrigger.innerText = 'Choose Photo';
-    } else if (mode === 'video') {
-      document.getElementById('viewport-heading').innerText = 'Video Timeline Inspection';
-      dropzoneBox.style.display = 'flex';
-      btnUploadTrigger.style.display = 'inline-flex';
-      btnUploadTrigger.innerText = 'Choose Video';
     } else if (mode === 'compare') {
       document.getElementById('viewport-heading').innerText = 'Side-by-Side Dual Comparison Lab';
       canvasEl.style.display = 'block';
@@ -586,13 +573,11 @@ document.addEventListener('DOMContentLoaded', () => {
   ---------------------------------------------------- */
   btnUploadTrigger.addEventListener('click', () => {
     if (currentMode === 'photo') filePhotoInput.click();
-    else if (currentMode === 'video') fileVideoInput.click();
     else if (currentMode === 'compare') fileCompareInput.click();
   });
 
   dropzoneBox.addEventListener('click', () => {
     if (currentMode === 'photo') filePhotoInput.click();
-    else if (currentMode === 'video') fileVideoInput.click();
     else if (currentMode === 'compare') fileCompareInput.click();
   });
 
@@ -635,81 +620,6 @@ document.addEventListener('DOMContentLoaded', () => {
       console.error('Photo inspection failed:', err);
       document.getElementById('engine-status-text').innerText = 'INSPECTION ERROR';
     }
-  }
-
-  /* ----------------------------------------------------
-     Video Upload & Timeline Handler
-  ---------------------------------------------------- */
-  fileVideoInput.addEventListener('change', (e) => {
-    if (e.target.files && e.target.files[0]) {
-      uploadVideo(e.target.files[0]);
-    }
-  });
-
-  async function uploadVideo(file) {
-    document.getElementById('engine-status-text').innerText = 'PROCESSING VIDEO TIMELINE...';
-    dropzoneBox.style.display = 'none';
-    videoPreview.style.display = 'block';
-    videoPreview.src = URL.createObjectURL(file);
-
-    try {
-      const resp = await fetch('/api/inspect/video', {
-        method: 'POST',
-        headers: {
-          'Content-Type': file.type || 'application/octet-stream',
-          'X-Filename': file.name
-        },
-        body: file
-      });
-      const data = await resp.json();
-
-      updateTelemetryUI({
-        verdict: data.verdict,
-        is_counterfeit: data.is_counterfeit,
-        denomination: data.primary_denomination,
-        confidence: 0.95,
-        composite_counterfeit_score: data.average_counterfeit_score,
-        halftone_score: data.average_counterfeit_score * 0.9,
-        counterfeit_cnn_prob: data.average_counterfeit_score * 0.8,
-        fps: data.video_fps,
-        latency_ms: 12.0
-      });
-
-      renderTimeline(data);
-      document.getElementById('engine-status-text').innerText = `VIDEO: ${data.duration_sec}s (${data.total_frames} frames)`;
-
-      if (window.audioEngine) {
-        window.audioEngine.trigger(data.is_counterfeit ? 'COUNTERFEIT_ALARM' : data.primary_denomination);
-      }
-    } catch (err) {
-      console.error('Video inspection failed:', err);
-      document.getElementById('engine-status-text').innerText = 'VIDEO ERROR';
-    }
-  }
-
-  function renderTimeline(data) {
-    timelineCard.classList.add('active');
-    timelineContainer.innerHTML = '';
-    timelineStats.innerText = `Analyzed ${data.timeline.length} sampled keyframes across ${data.duration_sec}s`;
-
-    data.timeline.forEach((node) => {
-      const el = document.createElement('div');
-      el.className = 'timeline-node';
-      const isSus = node.counterfeit_score >= 0.5;
-      const statusColor = isSus ? 'var(--pastel-suspect-dot)' : 'var(--pastel-genuine-dot)';
-
-      el.innerHTML = `
-        <img class="timeline-thumb" src="${node.thumbnail}" alt="Keyframe @ ${node.time_sec}s" />
-        <div style="font-size: 0.75rem; font-family: 'JetBrains Mono', monospace; display: flex; justify-content: space-between;">
-          <span>${node.time_sec}s</span>
-          <span style="color: ${statusColor}; font-weight: 600;">${isSus ? 'SUSPECT' : 'GENUINE'}</span>
-        </div>
-        <div style="font-size: 0.72rem; color: var(--text-secondary);">
-          ${node.denomination} (${(node.confidence * 100).toFixed(0)}%)
-        </div>
-      `;
-      timelineContainer.appendChild(el);
-    });
   }
 
   /* ----------------------------------------------------
