@@ -15,10 +15,12 @@ import cv2
 try:
     import torch
     import torch.nn as nn
+    import torch.nn.functional as F
     TORCH_AVAILABLE = True
 except ImportError:
     TORCH_AVAILABLE = False
     torch = None
+    F = None
     class _DummyModule:
         pass
     nn = type("nn", (), {"Module": _DummyModule})()
@@ -55,10 +57,11 @@ class ESPCNSubPixelNet(nn.Module):
         nn.init.zeros_(self.conv3.bias)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        base = F.interpolate(x, scale_factor=self.scale_factor, mode="bicubic", align_corners=False)
         out = self.relu1(self.conv1(x))
         out = self.relu2(self.conv2(out))
         out = self.pixel_shuffle(self.conv3(out))
-        return out
+        return base + out
 
 
 class SuperResolutionModule:

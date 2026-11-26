@@ -359,9 +359,9 @@ class CurrencyInspectionPipeline:
         is_currency = deduction["is_valid_currency"]
         note_name = deduction.get("note_name", denomination)
 
-        # Strict Background Gate with Guided Reticle & Full-Frame Fallbacks:
+        # Background Gate with Guided Reticle & Full-Frame Fallbacks:
         bg_prob = cnn_probs_dict.get("Background", 0.0) if cnn_probs_dict else 0.0
-        if bg_prob >= self.BACKGROUND_GATE:
+        if bg_prob >= 0.35:
             # 1) If a false contour was picked up, check the central guided reticle
             # 2) If guided_reticle cropped too tightly into a pre-cropped banknote, check full frame
             fallback_candidates = []
@@ -403,6 +403,10 @@ class CurrencyInspectionPipeline:
             is_currency = False
             denomination = "Background"
             note_name = "No Currency in View"
+        elif not is_note_detected and is_currency and bg_prob < 0.35:
+            frame_ar = max(w, h) / max(1.0, min(w, h))
+            if 1.65 <= frame_ar <= 2.75:
+                is_note_detected = True
 
         # Step 5: Super-Resolution & CMYK Halftone Analysis
         sr_roi = self.super_res.upscale_roi(roi)
