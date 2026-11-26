@@ -140,7 +140,7 @@ class CurrencyInspectionPipeline:
     Supports ultra-lightweight OpenCV DNN runtime (<65MB bundle) with seamless PyTorch fallback.
     """
 
-    BACKGROUND_GATE = 0.35
+    BACKGROUND_GATE = 0.65
 
     def __init__(
         self,

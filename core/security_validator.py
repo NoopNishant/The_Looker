@@ -68,16 +68,16 @@ class BanknoteSecurityValidator:
         max_score = 0.0
         primary_marker = ""
 
-        # Calibrated thresholds to ensure zero false positives on genuine RBI notes
-        # while reliably triggering on commercial toy/play/manoranjan currency
+        # Strict high-confidence thresholds to prevent false positives on genuine RBI notes
+        # while catching clear novelty/play/manoranjan currency
         marker_thresholds = {
-            "manoranjan_bank": 0.85,
-            "children_bank_header": 0.68,
-            "hindi_children_bank": 0.75,
-            "children_word": 0.75,
-            "full_of_fun_top": 0.75,
-            "full_of_fun_bot": 0.75,
-            "churan_label_strip": 0.85
+            "manoranjan_bank": 0.89,
+            "children_bank_header": 0.86,
+            "hindi_children_bank": 0.88,
+            "children_word": 0.88,
+            "full_of_fun_top": 0.86,
+            "full_of_fun_bot": 0.86,
+            "churan_label_strip": 0.90
         }
 
         header_templates = {

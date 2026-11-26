@@ -82,7 +82,7 @@ class DenominationDeductionEngine:
     # Blend / confidence tuning
     CNN_WEIGHT_MIN = 0.45   # weight of CNN when it is unsure
     CNN_WEIGHT_MAX = 0.85   # weight of CNN when it is very sure
-    BACKGROUND_GATE = 0.35
+    BACKGROUND_GATE = 0.65
     _CAL_MARGIN = (0.0, 0.025, 0.075, 0.125, 0.175, 0.25, 0.375, 0.45)
     _CAL_CONF = (0.50, 0.56, 0.62, 0.69, 0.82, 0.89, 0.98, 0.99)
 
@@ -155,27 +155,6 @@ class DenominationDeductionEngine:
             w_c, w_s, w_h, w_ar = 0.45, 0.20, 0.25 * hue_trust, 0.10
             total = w_c + w_s + w_h + w_ar
             optical_like = (w_c * score_chroma + w_s * score_spread + w_h * score_hue + w_ar * score_ar) / total
-
-            # Distinctive discrimination between ₹10 (Chocolate Brown) and ₹200 (Bright Yellow-Orange)
-            if denom == "200":
-                if mean_chroma[2] >= 0.17:      # High blue -> chocolate brown or other
-                    optical_like *= 0.35
-                if mean_sat < 110:              # ₹200 is vibrant
-                    optical_like *= 0.40
-                if mean_val < 150:              # ₹200 is bright
-                    optical_like *= 0.60
-                if mean_chroma[0] >= 0.52 and mean_chroma[2] <= 0.13 and mean_sat >= 130:
-                    optical_like = min(1.0, optical_like * 1.35)
-
-            elif denom == "10":
-                if mean_chroma[2] <= 0.13 and mean_chroma[0] >= 0.50:   # low blue + high red = bright orange
-                    optical_like *= 0.35
-                if mean_sat > 135:              # ₹10 is muted earthy brown
-                    optical_like *= 0.45
-                if mean_val > 185:              # ₹10 is dark brown, not neon
-                    optical_like *= 0.65
-                if mean_chroma[2] >= 0.18 and mean_sat <= 110:
-                    optical_like = min(1.0, optical_like * 1.30)
 
             scores[denom] = float(optical_like)
         return scores
